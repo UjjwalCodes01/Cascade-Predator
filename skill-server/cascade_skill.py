@@ -12,8 +12,12 @@ import os
 import time
 import json
 import re
+import hmac
+import hashlib
 import httpx
 import asyncio
+import subprocess
+from uuid import uuid4
 from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
 from typing import Optional
@@ -312,19 +316,77 @@ async def fetch_market_snapshot(token: str) -> MarketSnapshot:
     )
 
 
-# ── TWAK CLI Token Risk Assessor ──────────────────────────────────────────────
+# ── TWAK Token Risk Assessor (Direct HMAC API) ────────────────────────────────
+
+TWAK_GATEWAY_URL = "https://tws.trustwallet.com"
+TWAK_ACCESS_ID   = os.environ.get("TWAK_ACCESS_ID", "")
+TWAK_HMAC_SECRET = os.environ.get("TWAK_HMAC_SECRET", "")
+
+
+def _twak_sign_request(method: str, path: str, query: str = "") -> dict:
+    """
+    Generates TWAK HMAC-SHA256 signed request headers.
+    Replicates the exact signing logic from the TWAK CLI source (signRequest fn).
+
+    Plaintext = METHOD;PATH;SORTED_QUERY;ACCESS_ID;NONCE;DATE
+    Signature = HMAC-SHA256(plaintext, HMAC_SECRET) → base64
+    """
+    date = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+    nonce = str(uuid4())
+
+    # Sort query params alphabetically (mirrors sortQueryRaw in CLI)
+    sorted_query = "&".join(sorted(query.lstrip("?").split("&"))) if query else ""
+
+    plaintext = ";".join([
+        method.upper(),
+        path,
+        sorted_query,
+        TWAK_ACCESS_ID,
+        nonce,
+        date,
+    ])
+
+    signature = hmac.new(
+        TWAK_HMAC_SECRET.encode(),
+        plaintext.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    # CLI uses base64, not hex — fix:
+    import base64
+    signature = base64.b64encode(
+        hmac.new(TWAK_HMAC_SECRET.encode(), plaintext.encode(), hashlib.sha256).digest()
+    ).decode()
+
+    return {
+        "X-TW-CREDENTIAL": TWAK_ACCESS_ID,
+        "X-TW-NONCE": nonce,
+        "X-TW-DATE": date,
+        "Authorization": f"HMAC-SHA256 Signature={signature}",
+        "Content-Type": "application/json",
+        "User-Agent": "twak/0.19.1",
+    }
+
 
 def check_token_risk_with_twak(token: str) -> dict:
     """
-    Checks token risk using TWAK CLI command:
-      twak risk bsc:{address} --json
-    Gracefully falls back if credentials are not set or CLI fails.
+    Checks token risk by calling the TWAK Gateway API directly using HMAC-SHA256
+    signed requests — the same backend called by 'twak risk bsc:{address} --json'.
+
+    Endpoint: GET https://tws.trustwallet.com/v2/coinstatus/{asset_id}
+    Auth: TWAK_ACCESS_ID + TWAK_HMAC_SECRET env vars (from skill-server/.env)
+
+    Falls back gracefully if credentials are missing or the API is unreachable.
     """
     from pathlib import Path
-    
-    # 1. Resolve address from token-allowlist.json
-    allowlist_path = Path(__file__).parent.parent / "config" / "token-allowlist.json"
+
+    # 1. Check credentials are available
+    if not TWAK_ACCESS_ID or not TWAK_HMAC_SECRET:
+        print("[twak-risk] TWAK_ACCESS_ID / TWAK_HMAC_SECRET not set. Skipping risk check.")
+        return {"success": True, "source": "fallback", "safe": True, "reason": "No TWAK credentials"}
+
+    # 2. Resolve on-chain address for this token
     address = None
+    allowlist_path = Path(__file__).parent.parent / "config" / "token-allowlist.json"
     if allowlist_path.exists():
         try:
             with open(allowlist_path, "r") as f:
@@ -332,65 +394,101 @@ def check_token_risk_with_twak(token: str) -> dict:
                 address = allowlist.get(token.upper())
         except Exception as e:
             print(f"[twak-risk] Failed to read allowlist: {e}")
-            
+
     if not address:
-        # Fallback to tokens registry
         try:
             address = get_token_address(token)
         except Exception:
             pass
-            
+
     if not address:
-        print(f"[twak-risk] No on-chain address found for token {token}. Skipping risk check.")
+        print(f"[twak-risk] No on-chain address for {token}. Skipping risk check.")
         return {"success": True, "source": "fallback", "safe": True, "reason": "No address found"}
 
-    print(f"[twak-risk] Running TWAK security check for {token} ({address})...")
-    
+    # 3. Build the asset ID the same way TWAK CLI does: "c20000714/{address}"
+    # BSC testnet chain coin = c20000714, BSC mainnet = c20000714 (same coin, different network)
+    # The CLI accepts "bsc:{address}" — the gateway normalises it to c20000714/{address}
+    asset_id = f"c20000714/{address.lower()}"
+    path = f"/v2/coinstatus/{asset_id}"
+    query_str = "version=8.4&platform=android&include_security_info=true&include_solana_security_info=true"
+    query_sorted = "&".join(sorted(query_str.split("&")))
+
+    print(f"[twak-risk] Calling TWAK Gateway API for {token} ({address})...")
+
     try:
-        # standard global bin location
-        twak_path = "/home/ujwal/.npm-global/bin/twak"
-        if not os.path.exists(twak_path):
-            twak_path = "twak"
-            
-        cmd = [twak_path, "risk", f"bsc:{address}", "--json"]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10.0)
-        
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            is_honeypot = data.get("isHoneypot", False)
-            risk_score = data.get("score", 0)
-            
-            # Reject if honeypot or risk score is too high (> 75)
-            if is_honeypot or risk_score > 75:
-                print(f"[twak-risk] WARNING: High risk detected for {token}! Honeypot={is_honeypot}, Score={risk_score}")
-                return {
-                    "success": True,
-                    "source": "twak",
-                    "safe": False,
-                    "reason": f"TWAK detected high risk: Honeypot={is_honeypot}, Score={risk_score}",
-                    "details": data
-                }
+        headers = _twak_sign_request("GET", path, query_sorted)
+        url = f"{TWAK_GATEWAY_URL}{path}?{query_sorted}"
+
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(url, headers=headers)
+
+        if resp.status_code == 404:
+            # Token not indexed — treat as safe (native/wrapped assets)
+            print(f"[twak-risk] Token {token} not found in TWAK index — treating as safe.")
+            return {"success": True, "source": "twak", "safe": True, "reason": "Token not indexed (native asset)"}
+
+        if resp.status_code != 200:
+            print(f"[twak-risk] TWAK API returned {resp.status_code}. Falling back.")
+            return {"success": True, "source": "fallback", "safe": True, "reason": f"HTTP {resp.status_code}"}
+
+        data = resp.json()
+
+        # 4. Parse security info from the coinstatus response
+        security = data.get("security", {})
+        contract_sec = security.get("contract_security", {})
+        honeypot_risk = security.get("honeypot_risk", {})
+
+        # Detect honeypot: any item with code="is_honeypot" and type="risk"
+        is_honeypot = any(
+            item.get("code") == "is_honeypot" and item.get("type") == "risk"
+            for item in honeypot_risk.get("items", [])
+        )
+
+        # Aggregate risk counts
+        num_risks    = (contract_sec.get("num_risks", 0) or 0) + (honeypot_risk.get("num_risks", 0) or 0)
+        num_warnings = (contract_sec.get("num_warnings", 0) or 0) + (honeypot_risk.get("num_warnings", 0) or 0)
+        risk_level   = security.get("risk_level") or security.get("riskLevel") or "unknown"
+
+        print(
+            f"[twak-risk] {token}: honeypot={is_honeypot}, "
+            f"risks={num_risks}, warnings={num_warnings}, level={risk_level}"
+        )
+
+        # Reject high-risk tokens
+        if is_honeypot or risk_level in ("high", "critical") or num_risks >= 3:
+            reason = (
+                f"TWAK detected high risk: honeypot={is_honeypot}, "
+                f"risks={num_risks}, warnings={num_warnings}, level={risk_level}"
+            )
+            print(f"[twak-risk] ⚠️  BLOCKED — {reason}")
             return {
                 "success": True,
                 "source": "twak",
-                "safe": True,
-                "details": data
+                "safe": False,
+                "reason": reason,
+                "details": {
+                    "isHoneypot": is_honeypot,
+                    "numRisks": num_risks,
+                    "numWarnings": num_warnings,
+                    "riskLevel": risk_level,
+                },
             }
-        else:
-            err_msg = result.stderr or result.stdout
-            if "No API credentials" in err_msg or "VALIDATION_ERROR" in err_msg:
-                print(f"[twak-risk] Graceful fallback: TWAK credentials not configured.")
-                return {"success": True, "source": "fallback", "safe": True, "reason": "Credentials not set"}
-            else:
-                print(f"[twak-risk] TWAK risk command failed: {err_msg.strip()}")
-                return {"success": True, "source": "fallback", "safe": True, "reason": f"CLI error: {err_msg.strip()}"}
-                
-    except Exception as e:
-        print(f"[twak-risk] Graceful fallback: TWAK CLI invocation failed: {e}")
-        return {"success": True, "source": "fallback", "safe": True, "reason": f"Exception: {e}"}
 
-# Import subprocess here just to make it clean
-import subprocess
+        return {
+            "success": True,
+            "source": "twak",
+            "safe": True,
+            "details": {
+                "isHoneypot": is_honeypot,
+                "numRisks": num_risks,
+                "numWarnings": num_warnings,
+                "riskLevel": risk_level,
+            },
+        }
+
+    except Exception as exc:
+        print(f"[twak-risk] Graceful fallback — API call failed: {exc}")
+        return {"success": True, "source": "fallback", "safe": True, "reason": f"Exception: {exc}"}
 
 
 # ── Signal Core (pure function — mirrors signal/index.ts exactly) ─────────────
