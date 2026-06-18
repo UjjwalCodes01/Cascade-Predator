@@ -1,0 +1,51 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Trade {
+  id           String   @id @default(uuid())
+  tokenIn      String
+  tokenOut     String
+  amountIn     String
+  amountOut    String?
+  txHash       String?
+  cascadeScore Float
+  mode         String   // "paper" or "live"
+  status       String   // "pending", "success", "failed"
+  error        String?
+  timestamp    DateTime @default(now())
+}
+
+model Position {
+  id         String    @id @default(uuid())
+  token      String
+  entryPrice Float
+  exitPrice  Float?
+  amount     String
+  status     String    // "open" or "closed"
+  openedAt   DateTime  @default(now())
+  closedAt   DateTime?
+  pnl        Float?
+}
+
+model X402Ledger {
+  id          String   @id @default(uuid())
+  resource    String
+  amountSpent String
+  txHash      String?
+  timestamp   DateTime @default(now())
+}
+
+model Metric {
+  id           String   @id @default(uuid())
+  timestamp    DateTime @default(now())
+  vaultBalance String
+  dailyVolume  String
+  dailyCount   Int
+  drawdownPct  Float
+}

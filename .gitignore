@@ -1,0 +1,30 @@
+# Node
+node_modules/
+dist/
+build/
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.env
+
+# MacOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Coverage
+coverage/
+*.log
+
+# Local files
+.agentkit/
+.bnbagent/

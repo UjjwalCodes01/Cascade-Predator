@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment (secrets)
+.env
+
+# TWAK local signer keystore — AES-256 encrypted, but still should not be committed
+# Regenerate with: node create-keystore.mjs
+twak-keystore.json
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
