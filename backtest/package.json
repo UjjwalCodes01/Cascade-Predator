@@ -1,0 +1,22 @@
+{
+  "name": "backtest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsc && node dist/backtest/src/index.js",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.0",
+    "zod": "^3.23.8",
+    "@prisma/client": "^6.0.0",
+    "@google/genai": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  }
+}
