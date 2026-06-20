@@ -29,6 +29,21 @@ TOKEN_REGISTRY = {
         "futuresPair": None,
         "cmcSymbol": "USDT",
     },
+    "FLOKI": {
+        "address": "0xfb5B838b6cfEEdC2873aB27866079AC55363D37E",
+        "futuresPair": "FLOKIUSDT",
+        "cmcSymbol": "FLOKI",
+    },
+    "TWT": {
+        "address": "0x4B0F1812e5Df2A09796481Ff14017e6005508003",
+        "futuresPair": "TWTUSDT",
+        "cmcSymbol": "TWT",
+    },
+    "PENDLE": {
+        "address": "0xb3Ed0A426155B79B898849803E3B36552f7ED507",
+        "futuresPair": "PENDLEUSDT",
+        "cmcSymbol": "PENDLE",
+    },
 }
 
 def get_token_info(symbol: str) -> dict:
