@@ -14,6 +14,7 @@ import json
 import re
 import hmac
 import hashlib
+import base64
 import httpx
 import asyncio
 import subprocess
@@ -36,6 +37,10 @@ TAKE_PROFIT_PCT     = float(os.environ.get("TAKE_PROFIT_PCT", "3.0"))
 STOP_LOSS_PCT       = float(os.environ.get("STOP_LOSS_PCT", "1.5"))
 TRADE_SIZE_PCT      = float(os.environ.get("TRADE_SIZE_PCT", "10"))
 EXIT_TIMEOUT        = int(os.environ.get("EXIT_TIMEOUT_CANDLES", "12"))
+
+USE_VERTEX_AI       = os.environ.get("USE_VERTEX_AI", "false").lower() == "true"
+GOOGLE_CLOUD_PROJECT = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+GOOGLE_CLOUD_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 CMC_BASE = "https://pro-api.coinmarketcap.com"
 CMC_HEADERS = {
@@ -272,7 +277,9 @@ async def fetch_market_snapshot(token: str) -> MarketSnapshot:
             params={"symbol": token_info["cmcSymbol"], "convert": "USD"},
         )
         quote_resp.raise_for_status()
-        quote_data = quote_resp.json()["data"][token_info["cmcSymbol"]][0]["quote"]["USD"]
+        raw = quote_resp.json()["data"][token_info["cmcSymbol"]]
+        entry = raw[0] if isinstance(raw, list) else raw
+        quote_data = entry["quote"]["USD"]
 
         price = float(quote_data["price"])
         volume_24h = float(quote_data.get("volume_24h", 0.0))
@@ -346,13 +353,6 @@ def _twak_sign_request(method: str, path: str, query: str = "") -> dict:
         date,
     ])
 
-    signature = hmac.new(
-        TWAK_HMAC_SECRET.encode(),
-        plaintext.encode(),
-        hashlib.sha256
-    ).hexdigest()
-    # CLI uses base64, not hex — fix:
-    import base64
     signature = base64.b64encode(
         hmac.new(TWAK_HMAC_SECRET.encode(), plaintext.encode(), hashlib.sha256).digest()
     ).decode()
@@ -405,10 +405,9 @@ def check_token_risk_with_twak(token: str) -> dict:
         print(f"[twak-risk] No on-chain address for {token}. Skipping risk check.")
         return {"success": True, "source": "fallback", "safe": True, "reason": "No address found"}
 
-    # 3. Build the asset ID the same way TWAK CLI does: "c20000714/{address}"
+    # 3. Build the asset ID: "c20000714_t{address}"
     # BSC testnet chain coin = c20000714, BSC mainnet = c20000714 (same coin, different network)
-    # The CLI accepts "bsc:{address}" — the gateway normalises it to c20000714/{address}
-    asset_id = f"c20000714/{address.lower()}"
+    asset_id = f"c20000714_t{address.lower()}"
     path = f"/v2/coinstatus/{asset_id}"
     query_str = "version=8.4&platform=android&include_security_info=true&include_solana_security_info=true"
     query_sorted = "&".join(sorted(query_str.split("&")))
@@ -570,9 +569,11 @@ async def consult_gemini(
 ) -> tuple[bool, int, str]:
     """
     Call Gemini to confirm the signal. Returns (approved, confidence, reasoning).
-    Falls back to (threshold_check, 0, reason) if API key missing or call fails.
+    Falls back to (threshold_check, 0, reason) if call fails.
     """
-    if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
+    use_vertex = USE_VERTEX_AI or not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here"
+    
+    if not use_vertex and (not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here"):
         approved = cascade_score >= CASCADE_THRESHOLD
         return approved, 0, "No Gemini API key — threshold-only mode"
 
@@ -613,7 +614,14 @@ async def consult_gemini(
 Should I generate a LONG entry signal?""".strip()
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        if use_vertex:
+            client = genai.Client(
+                vertexai=True,
+                project=GOOGLE_CLOUD_PROJECT or None,
+                location=GOOGLE_CLOUD_LOCATION or None
+            )
+        else:
+            client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[{"role": "user", "parts": [{"text": user_message}]}],
