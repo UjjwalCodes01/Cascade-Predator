@@ -19,3 +19,6 @@ twak-keystore.json
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# SQLite price history and DB files
+skill-server/.agent-data/
