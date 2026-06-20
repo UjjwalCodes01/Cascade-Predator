@@ -17,16 +17,18 @@ The skill accepts a token symbol, fetches live CMC derivatives data, computes a 
 
 ---
 
-## CMC Data Dependencies
+## Data Dependencies
 
-| CMC Endpoint | Fields Used | Why |
-|---|---|---|
-| `GET /v2/cryptocurrency/quotes/latest` | `price`, `volume_24h`, `percent_change_1h` | Current spot price + recent momentum |
-| `GET /v1/cryptocurrency/market-pairs/latest` | `quote.open_interest` | Total leveraged exposure at risk |
-| `GET /v2/cryptocurrency/funding-fee/latest` | `funding_rate` | Crowded directional positioning |
-| `GET /v1/fear-and-greed/latest` | `value`, `value_classification` | Market-wide risk regime |
+The cascade signal combines two complementary live data sources:
 
-> All data fetched via **CoinMarketCap AI Agent Hub** with optional x402 pay-per-call access for premium data tiers.
+| Source | Endpoint / Method | Fields Used | Why |
+|---|---|---|---|
+| **CoinMarketCap Agent Hub (MCP)** | `detect_market_regime` skill | `fear_greed_value`, `market_regime`, `leverage_state`, `liquidation_state`, `conviction` | Regime context — gates entries so the skill doesn't fire in trending/euphoric markets |
+| **CoinMarketCap REST API** | `GET /v2/cryptocurrency/quotes/latest` | `price`, `volume_24h`, `percent_change_1h` | Spot price + recent momentum |
+| **CoinMarketCap REST API** | `GET /v3/fear-and-greed/latest` | `value` | Fallback regime input if the MCP call fails |
+| **Binance Futures (public API)** | `premiumIndex`, `openInterest`, `globalLongShortAccountRatio`, `takerlongshortRatio` | `lastFundingRate`, `openInterest`, taker buy/sell volume | Per-token derivatives — used to estimate liquidation intensity |
+
+> **Note:** Per-token funding rate and open interest are sourced from Binance Futures because CMC's derivatives endpoints aggregate across exchanges, while cascade detection needs the venue-specific snapshot a single perp market sees. The regime layer (fear & greed, leverage/liquidation state, market regime) is sourced entirely from CMC via MCP. CMC-native derivatives sourcing is on the roadmap.
 
 ---
 
