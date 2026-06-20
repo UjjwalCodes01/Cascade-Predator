@@ -52,11 +52,20 @@ A liquidation cascade occurs when large leveraged positions get forcefully close
 let _geminiClient: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI | null {
-  if (!config.GEMINI_API_KEY || config.GEMINI_API_KEY === "your_gemini_api_key_here") {
-    return null;
-  }
+  const useVertex = config.USE_VERTEX_AI === "true" || !config.GEMINI_API_KEY || config.GEMINI_API_KEY === "your_gemini_api_key_here";
+
   if (!_geminiClient) {
-    _geminiClient = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
+    if (useVertex) {
+      console.log(`[decision] Initializing GoogleGenAI client for Vertex AI (Project: ${config.GOOGLE_CLOUD_PROJECT}, Location: ${config.GOOGLE_CLOUD_LOCATION})`);
+      _geminiClient = new GoogleGenAI({
+        vertexai: true,
+        project: config.GOOGLE_CLOUD_PROJECT,
+        location: config.GOOGLE_CLOUD_LOCATION,
+      });
+    } else {
+      console.log(`[decision] Initializing GoogleGenAI client with API key`);
+      _geminiClient = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
+    }
   }
   return _geminiClient;
 }
@@ -69,7 +78,7 @@ async function consultGemini(
   const client = getGeminiClient();
   if (!client) return null;
 
-  const userMessage = `
+  let userMessage = `
 ## Market Signal for ${signal.token}
 
 **Cascade Score:** ${signal.cascadeScore}/100 (threshold: ${config.CASCADE_SCORE_THRESHOLD})
@@ -85,7 +94,21 @@ async function consultGemini(
 - Estimated Liquidations: $${(snapshot.liquidations / 1_000).toFixed(1)}K
 - Funding Rate: ${(snapshot.fundingRate * 100).toFixed(4)}%
 - Long/Short Ratio: ${snapshot.longShortRatio?.toFixed(2) ?? "N/A"}
+`;
 
+  if (snapshot.mcpReport) {
+    userMessage += `
+### CoinMarketCap Agent Hub Market Regime Insights
+- Market Regime: ${snapshot.mcpReport.market_regime}
+- Conviction: ${snapshot.mcpReport.conviction}
+- Leverage State: ${snapshot.mcpReport.leverage_state}
+- Liquidation State: ${snapshot.mcpReport.liquidation_state}
+- Summary: ${snapshot.mcpReport.summary}
+- Action Guidance: ${snapshot.mcpReport.action_guidance?.next_step ?? "N/A"}
+`;
+  }
+
+  userMessage += `
 ### Risk Parameters (from vault config)
 - Take Profit: +${config.TAKE_PROFIT_PCT}%
 - Stop Loss: -${config.STOP_LOSS_PCT}%
@@ -162,8 +185,8 @@ export class DecisionService {
 
         // ── LLM decision (Gemini) ─────────────────────────────────────
         let approved = false;
-        let llmReasoning = "Threshold-only mode (no Gemini API key configured)";
-        const hasGemini = !!config.GEMINI_API_KEY && config.GEMINI_API_KEY !== "your_gemini_api_key_here";
+        let llmReasoning = "Threshold-only mode (no Gemini API key or Vertex AI configured)";
+        const hasGemini = config.USE_VERTEX_AI === "true" || (!!config.GEMINI_API_KEY && config.GEMINI_API_KEY !== "your_gemini_api_key_here");
 
         if (hasGemini && snapshot) {
           console.log(`[decision] Consulting Gemini (${config.GEMINI_MODEL})...`);

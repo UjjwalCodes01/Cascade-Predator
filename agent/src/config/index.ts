@@ -25,6 +25,9 @@ const envSchema = z.object({
   // --- LLM (Google Gemini) ---
   GEMINI_API_KEY: z.string().optional(), // Required for live mode; paper mode falls back to threshold-only logic
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  USE_VERTEX_AI: z.string().optional().default("false"),
+  GOOGLE_CLOUD_PROJECT: z.string().optional(),
+  GOOGLE_CLOUD_LOCATION: z.string().optional().default("us-central1"),
 });
 
 const parsed = envSchema.safeParse(process.env);

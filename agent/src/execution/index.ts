@@ -9,6 +9,7 @@ const prisma = new PrismaClient();
 
 const vaultAbi = [
   "function executeSwap(uint256 amountIn, uint256 amountOutMin, address[] calldata path, uint256 deadline) external",
+  "function pancakeRouter() view returns (address)",
 ];
 
 export interface ExecutionResult {
@@ -99,8 +100,22 @@ export class ExecutionService {
       const vaultContract = new ethers.Contract(config.RISK_VAULT_ADDRESS, vaultAbi, signer);
 
       // 1% slippage: calculate amountOutMin via the on-chain router quote
-      // (set to 0 for testnet simplicity — use router quoting in production)
-      const amountOutMin = 0n;
+      let amountOutMin = 0n;
+      try {
+        const routerAddress = await vaultContract.pancakeRouter();
+        const routerAbi = [
+          "function getAmountsOut(uint256 amountIn, address[] calldata path) view returns (uint256[] memory amounts)"
+        ];
+        const routerContract = new ethers.Contract(routerAddress, routerAbi, provider);
+        console.log(`[execution] [LIVE] Quoting PancakeSwap router at ${routerAddress} for slippage protection...`);
+        const amounts = await routerContract.getAmountsOut(amountIn, path);
+        const expectedAmountOut = amounts[amounts.length - 1];
+        amountOutMin = (expectedAmountOut * 99n) / 100n; // 1% slippage tolerance
+        console.log(`[execution] [LIVE] Quote success: expectedOut=${ethers.formatEther(expectedAmountOut)}, amountOutMin=${ethers.formatEther(amountOutMin)}`);
+      } catch (err: any) {
+        console.warn(`[execution] [LIVE] Failed to quote PancakeSwap router, fallback to 0 slippage protection:`, err.message);
+        amountOutMin = 0n;
+      }
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 120);
 
       const tx = await vaultContract.executeSwap(amountIn, amountOutMin, path, deadline);

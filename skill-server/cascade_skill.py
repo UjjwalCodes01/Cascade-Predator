@@ -653,7 +653,7 @@ Should I generate a LONG entry signal?""".strip()
 
 # ── Main Entry Point ──────────────────────────────────────────────────────────
 
-_price_history: dict[str, list[float]] = {}
+from price_history import append as ph_append, load as ph_load
 
 
 async def analyze_token(token: str) -> dict:
@@ -673,15 +673,12 @@ async def analyze_token(token: str) -> dict:
             "reason": f"Market data fetch failed: {exc}",
         }
 
-    # 2. Update rolling price history (in-memory, resets on server restart)
-    if token not in _price_history:
-        _price_history[token] = []
-    _price_history[token].append(snapshot.price)
-    if len(_price_history[token]) > 20: # Match TS window size of 20
-        _price_history[token] = _price_history[token][-20:]
+    # 2. Update rolling price history (SQLite persisted)
+    ph_append(token, snapshot.price, snapshot.timestamp)
+    history = ph_load(token)
 
     # 3. Compute cascade score (pure function)
-    cascade_score, components = compute_cascade_score(snapshot, _price_history[token])
+    cascade_score, components = compute_cascade_score(snapshot, history)
 
     # 4. Pre-filter: don't call LLM for weak signals (saves API cost)
     if cascade_score < 40:

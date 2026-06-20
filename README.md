@@ -123,8 +123,8 @@ Client (judge / user)
         │  Optimistic settlement: 30-min dispute window, silence = approval
         ▼
   ERC-8004 Agent Identity (BSC Testnet — gas-free via MegaFuel paymaster)
-        │  agentId: <registered on-chain — see register.py>
-        │  Explorer: https://testnet.bscscan.com/tx/<registration-tx>
+        │  agentId: 1455
+        │  Explorer: https://testnet.bscscan.com/tx/0xb2f47170ec128d7bf4b33dbf0bbacd96d24920240f07abb8a4d40246fa47d2fd
 ```
 
 **On-chain contracts used (BSC Testnet, all free):**
