@@ -34,11 +34,11 @@ model Position {
 }
 
 model X402Ledger {
-  id          String   @id @default(uuid())
-  resource    String
-  amountSpent String
-  txHash      String?
-  timestamp   DateTime @default(now())
+  id           String   @id @default(uuid())
+  resource     String
+  amountSpent  String
+  paymentProof String?
+  timestamp    DateTime @default(now())
 }
 
 model Metric {

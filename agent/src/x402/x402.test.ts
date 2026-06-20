@@ -18,8 +18,8 @@ describe("X402Service", () => {
   it("should successfully trigger a simulated payment log", async () => {
     const result = await X402Service.pay("test-api-endpoint", "0.001");
     expect(result.success).toBe(true);
-    expect(result.txHash).toBeDefined();
-    expect(result.txHash).toContain("0x");
+    expect(result.paymentProof).toBeDefined();
+    expect(result.paymentProof).toContain("0x");
   });
 
   it("should handle HTTP 402 cycle, execute payment, and return resolved data on retry", async () => {

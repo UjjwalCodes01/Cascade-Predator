@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 
 export interface X402PaymentResult {
   success: boolean;
-  txHash?: string;
+  paymentProof?: string;
   error?: string;
 }
 
@@ -18,7 +18,7 @@ export interface X402PaymentResult {
  * This is the standard x402 off-chain payment channel approach:
  *  - The signature is deterministic and tamper-proof (can be verified on-chain)
  *  - Settlement is batched on-chain via executeSwap / periodic settlement tx
- *  - TxHash field stores the EIP-191 signature as the payment proof
+ *  - paymentProof field stores the EIP-191 signature as the payment proof
  */
 async function signPaymentMessage(
   resource: string,
@@ -51,12 +51,12 @@ export class X402Service {
         data: {
           resource,
           amountSpent: amount,
-          txHash: signature, // Real cryptographic signature, not a mock hash
+          paymentProof: signature, // Real cryptographic signature, not a mock hash
         },
       });
 
       console.log(`[x402] Payment signed. Proof: ${signature.substring(0, 20)}...`);
-      return { success: true, txHash: signature };
+      return { success: true, paymentProof: signature };
     } catch (error: any) {
       console.error(`[x402] Payment failed:`, error);
       return { success: false, error: error.message };
@@ -79,11 +79,11 @@ export class X402Service {
       console.warn(`[x402] Received HTTP 402 Payment Required for ${resource}. Initiating payment...`);
 
       const payment = await this.pay(resource, cost);
-      if (!payment.success || !payment.txHash) {
+      if (!payment.success || !payment.paymentProof) {
         throw new Error(`[x402] Aborting request. Payment failed: ${payment.error}`);
       }
 
-      const payHeader = `x402-sig ${payment.txHash}`;
+      const payHeader = `x402-sig ${payment.paymentProof}`;
       const secondResponse = await requestFn(payHeader);
 
       if (secondResponse.status === 200 && secondResponse.data !== undefined) {

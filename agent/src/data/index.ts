@@ -13,6 +13,7 @@ export interface MarketSnapshot {
   // Extra context fields for richer cascade scoring
   longShortRatio: number;   // ratio of long / short accounts (>1 = more longs)
   takerBuySellRatio: number; // ratio of taker buy / sell volume (>1 = buyers dominate)
+  mcpReport?: any;          // Optional CMC MCP Regime Report
 }
 
 // ─── Binance Futures helpers ─────────────────────────────────────────────────
@@ -116,18 +117,31 @@ async function fetchCmcSpotData(cmcSymbol: string): Promise<{
   pctChange1h: number;
   pctChange24h: number;
 }> {
-  const url = `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${cmcSymbol}`;
-  const res = await fetch(url, {
-    headers: {
-      "X-CMC_PRO_API_KEY": config.CMC_API_KEY,
-      "Accept": "application/json",
+  const cmcUrl = `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${cmcSymbol}`;
+  const cost = "0.01";
+
+  const rawData = await X402Service.executeWithPayment<any>(
+    async (paymentHeader) => {
+      // If paymentHeader is missing, simulate a 402 status so the wrapper retries with a payment proof
+      if (!paymentHeader) {
+        return { status: 402 };
+      }
+
+      const headers: Record<string, string> = {
+        "X-CMC_PRO_API_KEY": config.CMC_API_KEY,
+        "Accept": "application/json",
+        "Authorization": paymentHeader,
+      };
+      const r = await fetch(cmcUrl, { headers });
+      return { status: r.status, data: r.status === 200 ? await r.json() : undefined };
     },
-  });
+    `cmc/quotes/${cmcSymbol}`,
+    cost
+  );
 
-  if (!res.ok) throw new Error(`CMC Quotes API returned status ${res.status}`);
-
-  const json = (await res.json()) as any;
-  const q = json.data[cmcSymbol]?.quote?.USD;
+  const raw = rawData.data[cmcSymbol];
+  const entry = Array.isArray(raw) ? raw[0] : raw;
+  const q = entry?.quote?.USD;
   if (!q) throw new Error(`CMC returned no data for ${cmcSymbol}`);
 
   return {
@@ -139,7 +153,114 @@ async function fetchCmcSpotData(cmcSymbol: string): Promise<{
   };
 }
 
-async function fetchFearGreed(): Promise<number> {
+interface McpRegimeReport {
+  fear_greed_value: number;
+  market_regime: string;
+  conviction: string;
+  leverage_state: string;
+  liquidation_state: string;
+  summary: string;
+  action_guidance?: any;
+  raw_report?: any;
+}
+
+async function fetchMarketRegimeFromMcp(): Promise<McpRegimeReport> {
+  if (!config.CMC_API_KEY) {
+    throw new Error("CMC_API_KEY is not set in environment.");
+  }
+
+  const url = "https://mcp.coinmarketcap.com/skill-hub/stream";
+  const headers = {
+    "X-CMC-MCP-API-KEY": config.CMC_API_KEY,
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  };
+  const payload = {
+    jsonrpc: "2.0",
+    method: "tools/call",
+    params: {
+      name: "execute_skill",
+      arguments: {
+        unique_name: "detect_market_regime",
+        parameters: {
+          time_window: "30d",
+        },
+      },
+    },
+    id: 100,
+  };
+
+  console.log("[mcp] Calling CMC Agent Hub detect_market_regime skill...");
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`MCP API returned status ${res.status}`);
+  }
+
+  const text = await res.text();
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (line.startsWith("data:")) {
+      const dataJson = line.substring(5).trim();
+      const rpcResponse = JSON.parse(dataJson);
+
+      if (rpcResponse.error) {
+        throw new Error(`MCP RPC Error: ${JSON.stringify(rpcResponse.error)}`);
+      }
+
+      const resultContent = rpcResponse.result?.content;
+      if (!resultContent || resultContent.length === 0) {
+        throw new Error("MCP response content is empty");
+      }
+
+      const rawText = resultContent[0].text;
+      if (!rawText) {
+        throw new Error("MCP content text is empty");
+      }
+
+      const outerResult = JSON.parse(rawText);
+      const rpcInnerRes = outerResult.result;
+      if (rpcInnerRes?.error) {
+        throw new Error(`MCP inner execution failed: ${JSON.stringify(rpcInnerRes.error)}`);
+      }
+
+      const outputStr = rpcInnerRes?.output;
+      if (!outputStr) {
+        throw new Error("MCP output is empty");
+      }
+
+      const skillResult = JSON.parse(outputStr);
+      const evidenceData = skillResult.result?.data;
+
+      const status = evidenceData?.status;
+      if (status !== "ok") {
+        throw new Error(`MCP skill returned non-ok status: ${status}`);
+      }
+
+      const report = evidenceData.report;
+      const metrics = report?.metrics;
+
+      return {
+        fear_greed_value: parseInt(metrics?.fear_greed_value ?? "50", 10),
+        market_regime: report?.market_regime ?? "unknown",
+        conviction: report?.conviction ?? "unknown",
+        leverage_state: report?.leverage_state ?? "unknown",
+        liquidation_state: report?.liquidation_state ?? "unknown",
+        summary: evidenceData?.summary ?? "",
+        action_guidance: evidenceData?.action_guidance,
+        raw_report: report,
+      };
+    }
+  }
+
+  throw new Error("No event:message data found in MCP stream response");
+}
+
+async function fetchFearGreedFallback(): Promise<number> {
   try {
     const res = await fetch("https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest", {
       headers: {
@@ -161,63 +282,57 @@ export class DataService {
   /**
    * Fetches a fully real, live MarketSnapshot for a given token symbol.
    * - Spot price, volume, market cap → CMC REST API
-   * - Fear & Greed index            → CMC REST API
+   * - Fear & Greed / Regime info     → CMC MCP (fallback: REST API)
    * - Funding rate, open interest   → Binance Futures REST API (no key required)
    * - Liquidation proxy             → Binance taker buy/sell ratio
-   *
-   * Wrapped in the x402 payment flow to demonstrate HTTP-402 micro-payments.
    */
   static async fetchSnapshot(token: string): Promise<MarketSnapshot> {
-    const cost = "0.0001";
-    const resource = `cmc/derivatives/${token}`;
+    try {
+      const tokenInfo = getTokenInfo(token);
 
-    return X402Service.executeWithPayment<MarketSnapshot>(
-      async (paymentHeader) => {
-        if (!paymentHeader) {
-          return { status: 402 };
-        }
+      // 1. Fetch real spot price from CMC
+      const spot = await fetchCmcSpotData(tokenInfo.cmcSymbol);
 
-        try {
-          const tokenInfo = getTokenInfo(token);
+      // 2. Fetch Fear & Greed and regime info from CMC MCP (with REST fallback)
+      let fearGreed = 50;
+      let mcpReport: McpRegimeReport | undefined;
 
-          // 1. Fetch real spot price from CMC
-          const spot = await fetchCmcSpotData(tokenInfo.cmcSymbol);
+      try {
+        mcpReport = await fetchMarketRegimeFromMcp();
+        fearGreed = mcpReport.fear_greed_value;
+        console.log(`[mcp] Successfully fetched Fear & Greed (${fearGreed}) and Regime (${mcpReport.market_regime}) from CMC Agent Hub.`);
+      } catch (mcpError: any) {
+        console.warn(`[mcp] CMC Agent Hub call failed: ${mcpError.message}. Falling back to REST API.`);
+        fearGreed = await fetchFearGreedFallback();
+      }
 
-          // 2. Fetch real Fear & Greed index from CMC
-          const fearGreed = await fetchFearGreed();
+      // 3. Fetch real derivatives data from Binance Futures (if a futures pair exists)
+      let derivs = {
+        fundingRate: 0.0001 as number,
+        openInterest: 0 as number,
+        liquidations: 0 as number,
+        longShortRatio: 1 as number,
+        takerBuySellRatio: 1 as number,
+      };
+      if (tokenInfo.futuresPair) {
+        derivs = await fetchFuturesData(tokenInfo.futuresPair, spot.price);
+      }
 
-          // 3. Fetch real derivatives data from Binance Futures (if a futures pair exists)
-          let derivs = {
-            fundingRate: 0.0001 as number,
-            openInterest: 0 as number,
-            liquidations: 0 as number,
-            longShortRatio: 1 as number,
-            takerBuySellRatio: 1 as number,
-          };
-          if (tokenInfo.futuresPair) {
-            derivs = await fetchFuturesData(tokenInfo.futuresPair, spot.price);
-          }
-
-          const snapshot: MarketSnapshot = {
-            token,
-            fundingRate: derivs.fundingRate,
-            openInterest: derivs.openInterest,
-            liquidations: derivs.liquidations,
-            price: spot.price,
-            fearGreed,
-            timestamp: Date.now(),
-            longShortRatio: derivs.longShortRatio,
-            takerBuySellRatio: derivs.takerBuySellRatio,
-          };
-
-          return { status: 200, data: snapshot };
-        } catch (error) {
-          console.error(`[data] Failed to fetch live data for ${token}:`, (error as Error).message);
-          throw error; // Propagate — do not silently hide failures
-        }
-      },
-      resource,
-      cost
-    );
+      return {
+        token,
+        fundingRate: derivs.fundingRate,
+        openInterest: derivs.openInterest,
+        liquidations: derivs.liquidations,
+        price: spot.price,
+        fearGreed,
+        timestamp: Date.now(),
+        longShortRatio: derivs.longShortRatio,
+        takerBuySellRatio: derivs.takerBuySellRatio,
+        mcpReport,
+      };
+    } catch (error) {
+      console.error(`[data] Failed to fetch live data for ${token}:`, (error as Error).message);
+      throw error; // Propagate — do not silently hide failures
+    }
   }
 }
