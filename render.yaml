@@ -1,0 +1,38 @@
+services:
+  # Python Skill Server (Web Service)
+  - type: web
+    name: cascade-skill-server
+    env: python
+    rootDir: skill-server
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PRIVATE_KEY
+        sync: false
+
+  # TypeScript Agent (Background Worker)
+  - type: worker
+    name: cascade-agent
+    env: node
+    rootDir: agent
+    buildCommand: npm install -g pnpm && pnpm install && pnpm run db:generate && pnpm run build
+    # Defaulting to paper trading. Change to 'pnpm run live' if doing Track 1 live trading.
+    startCommand: pnpm run paper
+    envVars:
+      - key: NODE_VERSION
+        value: 20.14.0
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PRIVATE_KEY
+        sync: false
+      - key: RPC_URL
+        sync: false
+      - key: SKILL_SERVER_URL
+        # Set this manually in the Render dashboard to the URL of the cascade-skill-server above once deployed
+        sync: false
