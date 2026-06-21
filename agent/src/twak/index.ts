@@ -43,10 +43,22 @@ async function loadKeystoreWallet(keystorePath: string): Promise<ethers.HDNodeWa
   const absPath = resolve(keystorePath);
 
   if (!existsSync(absPath)) {
-    throw new Error(
-      `[twak] Keystore file not found: ${absPath}\n` +
-      `  Run: node create-keystore.mjs to generate it from your raw key.`
-    );
+    const privateKey = process.env.AGENT_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    const password = process.env.TWAK_WALLET_PASSWORD;
+    if (privateKey && password) {
+      console.log(`[twak] Keystore file not found at ${absPath}. Auto-generating from environment variables...`);
+      const wallet = new ethers.Wallet(privateKey);
+      console.log(`[twak] Encrypting wallet address: ${wallet.address}`);
+      const encrypted = await wallet.encrypt(password);
+      const fs = await import("fs");
+      fs.writeFileSync(absPath, encrypted, "utf8");
+      console.log(`[twak] ✅ Keystore auto-generated at: ${absPath}`);
+    } else {
+      throw new Error(
+        `[twak] Keystore file not found: ${absPath}\n` +
+        `  Run: node create-keystore.mjs to generate it from your raw key, or set AGENT_PRIVATE_KEY/PRIVATE_KEY and TWAK_WALLET_PASSWORD in env.`
+      );
+    }
   }
 
   const keystoreJson = readFileSync(absPath, "utf8");
@@ -97,6 +109,15 @@ export async function getTwakSigner(
 export function getKeystoreAddress(keystorePath: string): string {
   const absPath = resolve(keystorePath);
   if (!existsSync(absPath)) {
+    const privateKey = process.env.AGENT_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    if (privateKey) {
+      try {
+        const wallet = new ethers.Wallet(privateKey);
+        return wallet.address;
+      } catch (e) {
+        // Fall through to error
+      }
+    }
     throw new Error(`[twak] Keystore not found: ${absPath}`);
   }
   const parsed = JSON.parse(readFileSync(absPath, "utf8"));
