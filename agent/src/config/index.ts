@@ -21,7 +21,7 @@ const envSchema = z.object({
   STOP_LOSS_PCT: z.coerce.number().min(0.1).max(20).default(3),
   TRADE_SIZE_PCT: z.coerce.number().min(1).max(100).default(10),
   VOLATILITY_LIQUIDATION_THRESHOLD: z.coerce.number().min(1000).default(100000),
-  MONITORED_TOKENS: z.string().default("WBNB,CAKE"),
+  MONITORED_TOKENS: z.string().default("WBNB,CAKE,FLOKI,TWT,PENDLE"),
   // --- LLM (Google Gemini) ---
   GEMINI_API_KEY: z.string().optional(), // Required for live mode; paper mode falls back to threshold-only logic
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
