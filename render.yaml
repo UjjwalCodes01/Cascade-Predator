@@ -27,7 +27,7 @@ services:
     env: node
     plan: free # Force the free tier
     rootDir: agent
-    buildCommand: npm install -g pnpm && pnpm install && pnpm run db:generate && pnpm run build
+    buildCommand: npx --yes pnpm@latest install && npx pnpm run db:generate && npx pnpm run build
     startCommand: pnpm run paper
     envVars:
       - key: NODE_VERSION
