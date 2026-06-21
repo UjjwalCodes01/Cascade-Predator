@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { PrismaClient } from "@prisma/client";
-import CopyHelper from "./CopyHelper";
 
 const prisma = new PrismaClient();
 export const dynamic = "force-dynamic";
@@ -35,174 +34,278 @@ export default async function LedgerPage({ searchParams }: PageProps) {
     x402 = xList;
     total = count;
   } catch (dbError: any) {
-    console.warn("[ledger-page] Database connection failed, returning empty state:", dbError.message);
+    console.warn("[ledger-page] Database connection failed:", dbError.message);
   }
 
   const totalPages = Math.ceil(total / pageSize);
   const bscScanBase = process.env.NEXT_PUBLIC_BSCSCAN_BASE || "https://bscscan.com";
 
-  // Border helper every 5 rows
-  const getRowBorderClass = (index: number, totalRows: number) => {
-    if (index === totalRows - 1) return ""; // no border on last row
-    return (index + 1) % 5 === 0 
-      ? "border-b border-[rgba(255,255,255,0.06)]" 
-      : "border-b border-transparent";
-  };
+  const successCount = trades.filter((t) => t.status === "success").length;
+  const totalVolume = trades.reduce((sum, t) => sum + parseFloat(t.amountIn || "0"), 0);
 
   return (
-    <div className="flex flex-col gap-8 max-w-5xl mx-auto px-4 md:px-0 font-data">
-      
-      {/* Title */}
+    <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
+      {/* Header */}
       <div>
-        <h1 className="text-xl font-bold text-zinc-100 tracking-wider">AUDIT PROOF LEDGER</h1>
-        <p className="text-xs text-zinc-400 mt-1">Verifiable transaction logs and x402 micro-payment reports</p>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, letterSpacing: "-0.02em" }}>
+          Proof Ledger
+        </h1>
+        <p style={{ color: "var(--text-muted)", fontSize: 13, margin: "4px 0 0" }}>
+          Verifiable on-chain trade history and x402 API micro-payment audit trail
+        </p>
+      </div>
+
+      {/* Summary stats */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
+        {[
+          { label: "Total Trades", value: total, color: "var(--text)" },
+          {
+            label: "Success Rate",
+            value: total > 0 ? `${((successCount / trades.length) * 100).toFixed(0)}%` : "—",
+            color: "var(--green)",
+          },
+          {
+            label: "x402 Payments",
+            value: x402.length,
+            color: "var(--accent)",
+          },
+          {
+            label: "Volume (BNB)",
+            value: totalVolume.toFixed(4),
+            color: "var(--purple)",
+          },
+        ].map((s) => (
+          <div key={s.label} className="card" style={{ padding: "16px 20px" }}>
+            <div className="stat-label">{s.label}</div>
+            <div
+              style={{
+                fontSize: 22,
+                fontWeight: 700,
+                color: s.color,
+                marginTop: 6,
+                fontFamily: "JetBrains Mono, monospace",
+              }}
+            >
+              {s.value}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Trades Table */}
-      <div className="bg-zinc-950 border border-[rgba(255,255,255,0.06)] rounded-lg p-6">
-        <h2 className="text-xs font-bold text-zinc-400 tracking-widest uppercase mb-4">Trade Execution History</h2>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs text-zinc-500">
-            <thead>
-              <tr className="border-b border-[rgba(255,255,255,0.06)] text-zinc-400">
-                <th className="py-3 px-2 font-semibold">Timestamp</th>
-                <th className="py-3 px-2 font-semibold">Token Pair</th>
-                <th className="py-3 px-2 font-semibold">Amount In</th>
-                <th className="py-3 px-2 font-semibold">Amount Out</th>
-                <th className="py-3 px-2 font-semibold">Cascade Score</th>
-                <th className="py-3 px-2 font-semibold">Status</th>
-                <th className="py-3 px-2 font-semibold">Tx Hash</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.length === 0 ? (
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div
+          style={{
+            padding: "18px 24px",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Trade Execution History</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+              {total} records · Page {page + 1} of {Math.max(1, totalPages)}
+            </div>
+          </div>
+          <span className="badge badge-blue">On-Chain Verifiable</span>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          {trades.length === 0 ? (
+            <div
+              style={{
+                padding: "60px 24px",
+                textAlign: "center",
+                color: "var(--text-muted)",
+              }}
+            >
+              <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+              <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 6 }}>No trades recorded yet</div>
+              <div style={{ fontSize: 13 }}>
+                Trades will appear here once the agent executes its first strategy signal.
+              </div>
+            </div>
+          ) : (
+            <table className="table-base">
+              <thead>
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-zinc-600">No trades recorded.</td>
+                  <th>Timestamp</th>
+                  <th>Token Pair</th>
+                  <th style={{ textAlign: "right" }}>Amount In</th>
+                  <th style={{ textAlign: "right" }}>Amount Out</th>
+                  <th style={{ textAlign: "right" }}>Cascade Score</th>
+                  <th>Status</th>
+                  <th>Tx Hash</th>
                 </tr>
-              ) : (
-                trades.map((t, idx) => (
-                  <tr 
-                    key={t.id} 
-                    className={`hover:bg-zinc-900/10 transition-colors ${getRowBorderClass(idx, trades.length)}`}
-                  >
-                    <td className="py-3.5 px-2 text-zinc-500">{new Date(t.timestamp).toLocaleString()}</td>
-                    <td className="py-3.5 px-2 text-zinc-300 font-semibold">{t.tokenIn} → {t.tokenOut}</td>
-                    <td className="py-3.5 px-2">
-                      <span className="font-display text-sm text-zinc-300 font-medium">
-                        {parseFloat(t.amountIn).toFixed(4)}
+              </thead>
+              <tbody>
+                {trades.map((t) => (
+                  <tr key={t.id}>
+                    <td style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
+                      {new Date(t.timestamp).toLocaleString()}
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 700, color: "var(--text)", fontSize: 13 }}>
+                        {t.tokenIn}
+                      </span>
+                      <span style={{ color: "var(--text-muted)", margin: "0 4px" }}>→</span>
+                      <span style={{ fontWeight: 600, color: "var(--text-soft)" }}>{t.tokenOut}</span>
+                    </td>
+                    <td style={{ textAlign: "right", fontFamily: "JetBrains Mono, monospace", fontWeight: 600, color: "var(--text)" }}>
+                      {parseFloat(t.amountIn).toFixed(4)}
+                    </td>
+                    <td style={{ textAlign: "right", fontFamily: "JetBrains Mono, monospace", color: "var(--text-soft)" }}>
+                      {t.amountOut ? parseFloat(t.amountOut).toFixed(4) : "—"}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <span
+                        style={{
+                          fontFamily: "JetBrains Mono, monospace",
+                          fontWeight: 700,
+                          color: t.cascadeScore >= 70 ? "var(--accent)" : "var(--amber)",
+                          fontSize: 13,
+                        }}
+                      >
+                        {t.cascadeScore}
                       </span>
                     </td>
-                    <td className="py-3.5 px-2">
-                      <span className="font-display text-sm text-zinc-300 font-medium">
-                        {t.amountOut ? parseFloat(t.amountOut).toFixed(4) : "—"}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-2">
-                      <span className="font-display text-sm text-amber-500 font-bold">
-                        {t.cascadeScore}%
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-2">
-                      <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold ${
-                        t.status === "success" ? "bg-emerald-950/40 border border-emerald-800/40 text-emerald-400" :
-                        t.status === "failed" ? "bg-red-950/40 border border-red-800/40 text-red-400" :
-                        "bg-zinc-800 text-zinc-400"
-                      }`}>
+                    <td>
+                      <span
+                        className={`badge ${
+                          t.status === "success"
+                            ? "badge-green"
+                            : t.status === "failed"
+                            ? "badge-red"
+                            : "badge-gray"
+                        }`}
+                      >
                         {t.status}
                       </span>
                     </td>
-                    <td className="py-3.5 px-2">
+                    <td>
                       {t.txHash ? (
                         <a
                           href={`${bscScanBase}/tx/${t.txHash}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-zinc-500 hover:text-zinc-300 hover:underline"
+                          style={{
+                            fontFamily: "JetBrains Mono, monospace",
+                            fontSize: 12,
+                            color: "var(--accent)",
+                            textDecoration: "none",
+                          }}
                         >
-                          <CopyHelper text={t.txHash} startLen={8} endLen={6} />
+                          {t.txHash.slice(0, 8)}…{t.txHash.slice(-6)} ↗
                         </a>
                       ) : (
-                        <span className="text-zinc-700">—</span>
+                        <span style={{ color: "var(--text-muted)" }}>—</span>
                       )}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-6 border-t border-[rgba(255,255,255,0.06)] pt-4 text-xs">
-            <span className="text-zinc-500">Showing page {page + 1} of {totalPages}</span>
-            <div className="flex gap-2">
+          <div
+            style={{
+              padding: "14px 24px",
+              borderTop: "1px solid var(--border)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontSize: 13,
+            }}
+          >
+            <span style={{ color: "var(--text-muted)" }}>
+              Page {page + 1} of {totalPages}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
               <Link
                 href={`/ledger?page=${Math.max(0, page - 1)}`}
-                className={`px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 ${
-                  page === 0 ? "pointer-events-none opacity-50" : ""
-                }`}
+                className="btn btn-ghost"
+                style={{ opacity: page === 0 ? 0.4 : 1, pointerEvents: page === 0 ? "none" : "auto" }}
               >
-                Previous
+                ← Prev
               </Link>
               <Link
                 href={`/ledger?page=${Math.min(totalPages - 1, page + 1)}`}
-                className={`px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 hover:bg-zinc-800 ${
-                  page >= totalPages - 1 ? "pointer-events-none opacity-50" : ""
-                }`}
+                className="btn btn-ghost"
+                style={{
+                  opacity: page >= totalPages - 1 ? 0.4 : 1,
+                  pointerEvents: page >= totalPages - 1 ? "none" : "auto",
+                }}
               >
-                Next
+                Next →
               </Link>
             </div>
           </div>
         )}
       </div>
 
-      {/* X402 Micro-payments Table */}
-      <div className="bg-zinc-950 border border-[rgba(255,255,255,0.06)] rounded-lg p-6">
-        <h2 className="text-xs font-bold text-zinc-400 tracking-widest uppercase mb-4">X402 API Micro-payments Ledger</h2>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs text-zinc-500">
-            <thead>
-              <tr className="border-b border-[rgba(255,255,255,0.06)] text-zinc-400">
-                <th className="py-3 px-2 font-semibold">Timestamp</th>
-                <th className="py-3 px-2 font-semibold">Metered Resource</th>
-                <th className="py-3 px-2 font-semibold">Amount Spent</th>
-                <th className="py-3 px-2 font-semibold">Payment Proof Hash / Signature</th>
-              </tr>
-            </thead>
-            <tbody>
-              {x402.length === 0 ? (
+      {/* x402 Micro-payments */}
+      <div className="card" style={{ overflow: "hidden" }}>
+        <div
+          style={{
+            padding: "18px 24px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 15 }}>x402 API Micro-payment Ledger</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+            CMC API metered payments via the HTTP 402 protocol
+          </div>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          {x402.length === 0 ? (
+            <div
+              style={{
+                padding: "40px 24px",
+                textAlign: "center",
+                color: "var(--text-muted)",
+              }}
+            >
+              <div style={{ fontSize: 13 }}>No x402 micro-payments logged yet.</div>
+            </div>
+          ) : (
+            <table className="table-base">
+              <thead>
                 <tr>
-                  <td colSpan={4} className="py-8 text-center text-zinc-600">No micro-payments logged.</td>
+                  <th>Timestamp</th>
+                  <th>Metered Resource</th>
+                  <th style={{ textAlign: "right" }}>Amount Spent</th>
+                  <th>Payment Proof</th>
                 </tr>
-              ) : (
-                x402.map((x, idx) => (
-                  <tr 
-                    key={x.id} 
-                    className={`hover:bg-zinc-900/10 transition-colors ${getRowBorderClass(idx, x402.length)}`}
-                  >
-                    <td className="py-3.5 px-2 text-zinc-500">{new Date(x.timestamp).toLocaleString()}</td>
-                    <td className="py-3.5 px-2 text-zinc-300 font-semibold">{x.resource}</td>
-                    <td className="py-3.5 px-2">
-                      <span className="font-display text-sm text-zinc-300 font-medium">
-                        {x.amountSpent} U
-                      </span>
+              </thead>
+              <tbody>
+                {x402.map((x) => (
+                  <tr key={x.id}>
+                    <td style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
+                      {new Date(x.timestamp).toLocaleString()}
                     </td>
-                    <td className="py-3.5 px-2">
+                    <td style={{ fontWeight: 600, color: "var(--text)" }}>{x.resource}</td>
+                    <td style={{ textAlign: "right", fontFamily: "JetBrains Mono, monospace", fontWeight: 700 }}>
+                      {x.amountSpent} U
+                    </td>
+                    <td>
                       {x.paymentProof ? (
-                        <CopyHelper text={x.paymentProof} startLen={8} endLen={6} />
+                        <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12, color: "var(--text-muted)" }}>
+                          {x.paymentProof.slice(0, 10)}…{x.paymentProof.slice(-6)}
+                        </span>
                       ) : (
-                        <span className="text-zinc-700">—</span>
+                        <span style={{ color: "var(--text-muted)" }}>—</span>
                       )}
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>

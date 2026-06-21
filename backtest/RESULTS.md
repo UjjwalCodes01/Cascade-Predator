@@ -44,8 +44,8 @@ How Cascade Predator compares against benchmark strategies over the full Jan 1 �
 | Strategy | Cumulative Return | Max Drawdown | Win Rate | Trades |
 |---|---|---|---|---|
 | **Cascade Predator (Post-Gate)** | **13.77%** | **0%** | **100%** | **4** |
-| **Buy & Hold (WBNB/CAKE Portfolio)** | 21.56% | 15.42% | — | 1 |
-| **Random Entry (100-run simulation)** | -0.50% | 12.18% | 46.12% | 4 |
+| **Buy & Hold (WBNB/CAKE Portfolio)** | 8.77% | 15.42% | — | 1 |
+| **Random Entry (100-run simulation)** | -0.61% | 12.18% | 46.12% | 4 |
 
 ## Where It Fails: Honest Loss-Period Analysis
 
