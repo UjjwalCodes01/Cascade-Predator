@@ -165,8 +165,21 @@ function EquityChart({ data }: { data: TradePoint[] }) {
 }
 
 export default async function BacktestPage() {
-  const backtestDir = path.resolve(process.cwd(), "../backtest");
-  const csvPath = path.join(backtestDir, "trades_log.csv");
+  const possiblePaths = [
+    path.join(process.cwd(), "app/backtest/trades_log.csv"),
+    path.join(process.cwd(), "frontend/app/backtest/trades_log.csv"),
+    path.join(process.cwd(), "../backtest/trades_log.csv"),
+    path.join(process.cwd(), "backtest/trades_log.csv"),
+    path.join(process.cwd(), "trades_log.csv"),
+  ];
+
+  let csvPath = possiblePaths[0];
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      csvPath = p;
+      break;
+    }
+  }
 
   let tradesData: TradePoint[] = [];
 
