@@ -1,334 +1,183 @@
-# Cascade Predator
+# 🌌 Cascade Predator
 
-> A CMC Strategy Skill that detects **liquidation cascade** setups on BNB Smart Chain derivatives markets using CoinMarketCap data, scores them with a composite model, and confirms entries with an LLM reasoner — producing a fully backtestable trading strategy spec, deployed as an **ERC-8183 on-chain skill provider**.
->
-> Built for **BNB Hack: AI Trading Agent Edition** (CoinMarketCap × Trust Wallet × BNB Chain), **Track 2: Strategy Skills**.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![BNB Chain](https://img.shields.io/badge/BNB_Chain-F3BA2F?style=flat&logo=binance&logoColor=white)](https://www.bnbchain.org/)
+[![Track: Strategy Skills](https://img.shields.io/badge/Track-Strategy_Skills-blue.svg)](#)
 
-[![Track](https://img.shields.io/badge/Track%202-Strategy%20Skills-purple)]()
-[![Chain](https://img.shields.io/badge/chain-BNB%20Smart%20Chain%20Testnet-f0b90b)]()
-[![CMC](https://img.shields.io/badge/data-CoinMarketCap%20Agent%20Hub-blue)]()
-[![BNBAgent](https://img.shields.io/badge/BNB%20AI%20Agent%20SDK-ERC--8004%20%2B%20ERC--8183-green)]()
-[![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
+> **Market Regime-Aware Liquidation Cascade Hunter on BNB Chain**  
+> Powered by CoinMarketCap Agent Hub (MCP), Trust Wallet Agent Kit (TWAK), and BNB Chain.
 
----
-
-## Table of contents
-
-- [What it is](#what-it-is)
-- [The edge (thesis)](#the-edge-thesis)
-- [Strategy architecture](#strategy-architecture)
-- [On-chain integration (BNB AI Agent SDK)](#on-chain-integration-bnb-ai-agent-sdk)
-- [Tech stack](#tech-stack)
-- [Repository layout](#repository-layout)
-- [Setup instructions](#setup-instructions)
-- [Environment variables](#environment-variables)
-- [Running the strategy](#running-the-strategy)
-- [Frontend dashboard](#frontend-dashboard)
-- [Backtesting & performance results](#backtesting-performance-results)
-- [Skill definition (SKILL.md)](#skill-definition)
-- [FAQ](#faq)
-- [Future roadmap](#future-roadmap)
-- [Disclaimers](#disclaimers)
-- [License](#license)
+Cascade Predator is an autonomous trading agent and strategy skill designed to detect and profit from liquidation cascades on BNB Chain. It combines macro sentiment regime-awareness (to avoid trading in high-conviction uptrends) with deep on-chain derivatives data analysis (to identify forced deleveraging events).
 
 ---
 
-## What it is
+## 📑 Table of Contents
+- [Motivation](#-motivation)
+- [Architecture](#-architecture)
+- [Key Features](#-key-features)
+- [Tech Stack](#-tech-stack)
+- [Project Structure](#-project-structure)
+- [Prerequisites](#-prerequisites)
+- [Quick Start & Deployment](#-quick-start--deployment)
+- [Backtest Performance](#-backtest-performance)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Disclaimer](#-disclaimer)
 
-Cascade Predator is a **CMC Strategy Skill** — a backtestable trading strategy spec that generates entry and exit signals from CoinMarketCap derivatives data. It targets a specific, well-documented microstructure edge: the price snap-back that follows a **leveraged liquidation cascade** on BSC DEX markets.
+---
 
-The skill has three layers working together:
+## 💡 Motivation
 
-1. **Signal Core** (`agent/src/signal/`) — pure, deterministic functions that compute a *cascade probability score* (0–100) from live CMC derivatives data (funding rates, open interest, estimated liquidations, price deviation). No I/O, no side effects — the same code runs in live simulation and in the backtest.
-2. **Decision Layer** (`agent/src/decision/`) — a Google Gemini LLM reasoner that validates high-scoring setups against the full market snapshot before generating a `TradeIntent`. Returns structured JSON with `approved`, `confidence`, and `reasoning`.
-3. **Backtest Harness** (`backtest/`) — historical replay that runs the exact same `signal/` and `risk/` modules against archived CMC data, producing net-of-fee PnL curves and per-signal breakdowns.
+In high-leverage decentralized markets, liquidation cascades pose significant risks for retail traders, but they also create the most profitable mean-reversion opportunities if detected early. Cascade Predator aims to democratize institutional-grade cascade detection. By leveraging CoinMarketCap's market sentiment data and Trust Wallet's Agent Kit for secure, decentralized API payments, we provide a robust, self-custodial engine for navigating extreme market volatility.
 
-This is **not** an execution agent — it outputs strategy signals and a backtestable spec. The deliverable is the strategy logic, the CMC data pipeline, and the validated edge, not an on-chain executor.
+---
 
-## The edge (thesis)
+## 🏗️ Architecture
 
-Leveraged positions are force-closed ("liquidated") when price moves against them. Because many traders cluster at similar leverage levels, their liquidation prices stack into bands. Price drifting into a band triggers forced selling, which pushes price further, which triggers the next liquidation — a **cascade**. Forced flow is price-insensitive, so the move *overshoots*, then snaps back once forced selling exhausts.
-
-Cascade Predator estimates where those clusters sit (from open interest and assumed leverage distributions), detects when price is moving into a cluster, and generates a counter-trend entry signal into the overshoot — targeting the snap-back recovery.
-
-The edge is:
-- **Explainable:** one sentence to a judge — *it trades the flush, not the noise.*
-- **Backtestable:** the full signal pipeline is pure functions; historical replay is deterministic.
-- **CMC-native:** every input comes from the CoinMarketCap AI Agent Hub (derivatives, spot, Fear & Greed).
-
-## Strategy architecture
-
-```
-CoinMarketCap AI Agent Hub
-  ├─ derivatives  (funding rate, open interest, liquidations)  ─┐
-  ├─ spot         (price, volume, 24h deviation)  ───────────────┼──▶  SIGNAL CORE  ──▶  cascadeScore (0–100)
-  └─ fear & greed (market regime)  ──────────────────────────────┘     (pure functions, backtestable)
-                                                                                │
-                                               cascadeScore ≥ threshold (env)  │
-                                                                                ▼
-                                               DECISION  ──▶  Gemini LLM reasoner
-                                               (x402-paid inference)    │
-                                                                         ▼
-                                               TradeIntent { token, side, sizePct, entry, takeProfit, stopLoss }
-                                                                         │
-                                               OFF-CHAIN GUARDS          │
-                                               (drawdown monitor,        ▼
-                                                staleness, sanity)   signal log / backtest output
+```text
+                                  [ CoinMarketCap Agent Hub (MCP) ]
+                                                │
+                                                ▼ (detect_market_regime)
+[ Next.js Web Dashboard ] ◄─── [ TypeScript Cascade Agent ] ◄─── [ Python Skill Server ]
+       (Vercel)                 (Render Daemon, TWAK, x402)       (Render ERC-8183 Web App)
 ```
 
-### Signal Components
+1. **Python Skill Server (ERC-8183)**: Houses the market regime detection skill. It interacts with the CoinMarketCap Agent Hub via MCP to determine the macro market state (fear, greed, conviction, leverage, and liquidation states).
+2. **TypeScript Cascade Agent**: A background trading daemon that polls real-time metrics for monitored tokens (e.g., WBNB, CAKE, FLOKI). It queries the Skill Server for regime conviction and calculates final cascade scores.
+3. **Trust Wallet Agent Kit (TWAK) & x402**: Handles secure local message signing via an encrypted keystore (`twak-keystore.json`) to provide metered, pay-per-request API access for premium data.
+4. **Next.js Web Dashboard**: A premium, responsive interface showcasing live token scanners, positions ledger, backtest research, and strategy parameters.
 
-| Component | CMC Data Source | Max Score | What it measures |
-|-----------|----------------|-----------|-----------------|
-| Liquidation Intensity | `derivatives/liquidations` | 40 | Volume of forced closures vs. baseline |
-| Price Deviation | `spot/ohlcv` + rolling mean | 40 | How far price has overshot from its 20-period mean |
-| Funding Stress | `derivatives/funding-rates` | 20 | Extreme negative funding = crowded short, squeeze imminent |
-| **Composite cascadeScore** | All three | **100** | Weighted sum → entry signal |
+---
 
-### Entry & Exit Rules
+## ⚡ Key Features
 
-```
-ENTRY:
-  IF cascadeScore ≥ CASCADE_SCORE_THRESHOLD
-  AND Gemini confidence ≥ 75%
-  THEN BUY {token} with {TRADE_SIZE_PCT}% of capital
-       at current price
+* **🛡️ Market Regime Gate**: Uses the CMC `detect_market_regime` MCP skill to self-disable the mean-reversion strategy during euphoric trending uptrends, preventing costly stop-out whipsaws.
+* **🌊 Liquidation Cascade Engine**: Monitors spot quotes, funding rates, open interest, and taker long/short volume ratios to detect forced liquidations.
+* **💳 Decentralized Payment Pipeline (x402)**: Authenticates and meters premium endpoint queries dynamically via EIP-191 signatures signed locally by TWAK.
+* **🔄 Fail-Safe Fallback**: If the CoinMarketCap derivatives API is restricted by tier limits, the data layer automatically redirects inquiries to public Binance Futures endpoints to guarantee 100% uptime.
 
-TAKE PROFIT: +TAKE_PROFIT_PCT% from entry
-STOP LOSS:   -STOP_LOSS_PCT% from entry
-TIME STOP:   EXIT_TIMEOUT_CANDLES ticks if neither TP nor SL hit
+---
 
-EXIT:
-  Whichever of TP / SL / time-stop triggers first
-```
+## 🛠️ Tech Stack
 
-All parameters are configurable in `.env` — nothing is hardcoded.
+- **Agent Daemon**: Node.js, TypeScript, Prisma (PostgreSQL)
+- **Skill Server**: Python, FastAPI, Uvicorn
+- **Frontend**: Next.js, React, TailwindCSS
+- **Web3 & Security**: Trust Wallet Agent Kit (TWAK), ethers.js, x402
+- **Data Providers**: CoinMarketCap API, Binance Futures API
 
-## On-chain integration (BNB AI Agent SDK)
+---
 
-This strategy is deployed as a live **ERC-8183 skill provider** using the [BNB AI Agent SDK](https://github.com/bnb-chain/bnbagent-sdk). Judges can submit real on-chain jobs and receive verified signal deliverables — no testnet funds required on the client side.
+## 📂 Project Structure
 
-```
-Client (judge / user)
-        │
-        │  POST /erc8183/negotiate  →  "Analyze CAKE for cascade signal"
-        ▼
-  Cascade Predator ERC-8183 Provider  (skill-server/main.py)
-        │  1. Fetches live CMC derivatives data (funding, OI, liquidations, F&G)
-        │  2. Runs cascade score algorithm  (liquidation + price dev + funding stress)
-        │  3. Calls Gemini 2.5 Flash for LLM confirmation (structured JSON output)
-        │  4. Builds signal: { entry, takeProfit, stopLoss, cascadeScore, reasoning }
-        ▼
-  on-chain deliverable (BSC Testnet, ERC-8183)
-        │  keccak256(signal JSON) anchored on-chain as the job deliverable
-        │  Optimistic settlement: 30-min dispute window, silence = approval
-        ▼
-  ERC-8004 Agent Identity (BSC Testnet — gas-free via MegaFuel paymaster)
-        │  agentId: 1455
-        │  Explorer: https://testnet.bscscan.com/tx/0xb2f47170ec128d7bf4b33dbf0bbacd96d24920240f07abb8a4d40246fa47d2fd
-```
+* [`/agent`](./agent): TypeScript daemon, risk manager, TWAK keystore logic, and x402 payment handler.
+* [`/skill-server`](./skill-server): Python ERC-8183 skill server hosting the regime analysis functions.
+* [`/frontend`](./frontend): Next.js web application built with React, TailwindCSS, and chart components.
+* [`/backtest`](./backtest): Historical replay harness with cached market snapshots (Jan-Apr 2026).
 
-**On-chain contracts used (BSC Testnet, all free):**
+---
 
-| Contract | Address |
-|---|---|
-| Identity Registry (ERC-8004) | `0x8004A818BFB912233c491871b3d84c89A494BD9e` |
-| AgenticCommerce (ERC-8183) | `0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de` |
-| EvaluatorRouter | `0xd7d36d66d2f1b608a0f943f722d27e3744f66f25` |
-| OptimisticPolicy | `0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6` |
+## 📝 Prerequisites
 
-**Quick test (no job required):**
-```bash
-curl http://localhost:8003/skill/scan/CAKE
+- Node.js (v18 or higher) & `pnpm`
+- Python 3.10+
+- A PostgreSQL Database (e.g., Supabase, Neon, local)
+- A CoinMarketCap Pro API Key
+- Trust Wallet Access ID & HMAC Secret
+- A BNB Chain Wallet Private Key (for the Agent)
+
+---
+
+## 🚀 Quick Start & Deployment
+
+### 1. Environment Variables Configuration
+
+Create an `.env` file in the `/agent` directory with the following variables:
+```env
+TWAK_WALLET_PASSWORD=your_keystore_password
+AGENT_PRIVATE_KEY=your_agent_bsc_wallet_private_key
+BSC_RPC_URL=https://bsc-dataseed.binance.org
+CMC_API_KEY=your_coinmarketcap_pro_api_key
+SKILL_SERVER_URL=http://localhost:8000
+DATABASE_URL=postgresql://...
 ```
 
-## Tech stack
-
-| Layer | Choice | Notes |
-|-------|--------|-------|
-| **Skill server** | Python 3.11 + FastAPI | ERC-8183 provider (`skill-server/`) |
-| **Agent identity** | BNB AI Agent SDK (ERC-8004) | Gas-free registration on BSC Testnet |
-| **Agentic commerce** | BNB AI Agent SDK (ERC-8183) | On-chain job + deliverable settlement |
-| Strategy core | TypeScript (strict) | Pure signal + risk functions; importable by backtest |
-| Signal data | CoinMarketCap AI Agent Hub | Derivatives, spot, Fear & Greed via x402 |
-| LLM reasoner | Google Gemini 2.5 Flash | Structured JSON output (`approved`, `confidence`, `reasoning`) |
-| Backtest harness | Node.js + TypeScript | Imports live `signal/` + `risk/` unchanged |
-| x402 | CMC Agent Hub x402 | Pay-per-call data access in the signal pipeline |
-| Package manager | pnpm | Workspace-scoped installs |
-
-> **No on-chain execution, no smart contracts, no TWAK signing** — Track 2 requires a backtestable strategy spec, not a live trading agent.
-
-## Repository layout
-
-```
-cascade-predator/
-├── README.md
-├── SKILL.md                      # CMC Skill definition (the Track 2 deliverable)
-├── AGENT.md                      # Development standards
-├── CLAUDE.md                     # AI coding assistant operating manual
-├── agent/                        # Strategy signal + decision layer
-│   ├── src/data/                 # CMC API clients (derivatives, spot, F&G)
-│   ├── src/signal/               # Cascade scorer — pure functions (PURE)
-│   ├── src/decision/             # LLM reasoner → TradeIntent (Gemini)
-│   ├── src/risk/                 # Off-chain strategy guards (PURE)
-│   ├── src/x402/                 # x402 pay-per-call data spend policy
-│   ├── src/loop/                 # Simulation loop (paper mode)
-│   └── src/db/                   # Postgres signal log
-├── skill-server/                 # Python ERC-8183 skill provider
-│   ├── main.py                   # FastAPI entry point (create_erc8183_app)
-│   ├── cascade_skill.py          # Core strategy: CMC fetch + scorer + Gemini
-│   ├── register.py               # ERC-8004 one-shot registration (gas-free)
-│   ├── requirements.txt
-│   └── .env.example
-├── backtest/                     # Historical replay harness
-│   └── src/                      # Imports agent/signal + agent/risk unchanged
-├── config/
-│   └── token-allowlist.json      # The 149 eligible BEP-20 tokens from competition spec
-└── .env.example
+Create an `.env` file in the `/skill-server` directory:
+```env
+CMC_API_KEY=your_coinmarketcap_pro_api_key
+TWAK_ACCESS_ID=your_tw_access_id
+TWAK_HMAC_SECRET=your_tw_hmac_secret
 ```
 
-## Setup instructions
+### 2. Deploying the Skill Server (Render)
+1. Deploy `/skill-server` as a Web Service on Render.
+2. Build Command: `pip install -r requirements.txt`
+3. Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-**Prerequisites:** Node ≥ 20, pnpm ≥ 9, Python ≥ 3.10, CMC Agent Hub API key, Google Gemini API key.
+### 3. Deploying the Cascade Agent (Render)
+1. Deploy `/agent` as a Background Worker or Web Service on Render.
+2. Build Command: `npx --yes pnpm@latest install && npx pnpm run db:generate && npx pnpm run build`
+3. Start Command: `node dist/index.js`
+4. **Keystore Configuration**: Ensure the `AGENT_PRIVATE_KEY` environment variable is set in the Render dashboard so the agent can auto-generate its TWAK keystore on startup.
 
-```bash
-git clone <your-repo-url> cascade-predator
-cd cascade-predator
+### 4. Deploying the Frontend (Vercel)
+1. Import the repository into Vercel.
+2. Set the Root Directory to `frontend`.
+3. Set the Environment Variables `DATABASE_URL` and `SKILL_SERVER_URL`.
+4. Deploy.
 
-# 1. Python skill server
-cd skill-server
-pip install -r requirements.txt
-cp .env.example .env        # fill in CMC_API_KEY, GEMINI_API_KEY, WALLET_PASSWORD
-python register.py          # register ERC-8004 identity (gas-free, one-time)
-uvicorn main:app --port 8003   # start the ERC-8183 skill server
+---
 
-# 2. TypeScript agent (signal simulation)
-cd ../agent && pnpm install
-pnpm run paper              # live data, simulated signals (no real trades)
+## 📊 Backtest Performance (Regime Gate Impact)
 
-# 3. Backtest
-cd ../backtest && pnpm install
-pnpm start -- --from 2026-01-01 --to 2026-04-01
-```
-
-## Environment variables
-
-**Never commit `.env`.** Ship only `.env.example`.
-
-**Skill server (`skill-server/.env`):**
-
-| Variable | Required | Description |
-|----------|:--------:|-------------|
-| `PRIVATE_KEY` | ✅ (first run) | Wallet private key — imported to keystore, then removable |
-| `WALLET_PASSWORD` | ✅ | Keystore encryption password |
-| `NETWORK` | ⬜ | `bsc-testnet` (default) |
-| `CMC_API_KEY` | ✅ | CoinMarketCap AI Agent Hub API key |
-| `GEMINI_API_KEY` | ✅ | Google Gemini API key for LLM signal confirmation |
-| `GEMINI_MODEL` | ⬜ | Model name (default: `gemini-2.5-flash`) |
-| `ERC8183_AGENT_URL` | ✅ | Public URL of this server (e.g. `http://localhost:8003/erc8183`) |
-| `ERC8183_SERVICE_PRICE` | ⬜ | Min payment per job in raw U-token units (default: 0 = free) |
-| `CASCADE_SCORE_THRESHOLD` | ⬜ | Min score to trigger Gemini (default: 70) |
-| `TAKE_PROFIT_PCT` | ⬜ | Take-profit % above entry (default: 3.0) |
-| `STOP_LOSS_PCT` | ⬜ | Stop-loss % below entry (default: 1.5) |
-| `TRADE_SIZE_PCT` | ⬜ | Hypothetical position size % (default: 10) |
-| `MONITORED_TOKENS` | ⬜ | Comma-separated tokens (default: `WBNB,CAKE`) |
-| `MONITORED_TOKENS` | ✅ | Comma-separated token symbols to watch (e.g. `WBNB,CAKE`) |
-
-## Running the strategy
-
-```bash
-# Run the live signal scanner in paper mode (no real trades — signal output only)
-cd agent && pnpm run paper
-
-# Single signal scan (one-shot, useful for testing a specific snapshot)
-cd agent && pnpm run scan
-
-# Type-check the codebase
-cd agent && pnpm run typecheck
-```
-
-## Frontend dashboard
-
-Cascade Predator includes a premium Next.js frontend to monitor live signal data, view the current Cascade Score, toggle the sandbox simulator, and pause/unpause the strategy.
-
-The frontend is built to:
-- **Fail Loudly**: Validates that all environment variables are present and errors explicitly if the contract address or RPC is missing, rather than silently falling back to incorrect defaults.
-- **Secure Sandbox Mode**: Includes a 2-step click confirmation, a persistent warning banner, and a dashed indicator ring around the centerpiece orb to prevent accidental recording mistakes during live demos.
-- **Synchronized Data**: Directly binds to the agent's database snapshots, ensuring the live view never drifts from the agent's underlying logic.
-
-To run the dashboard:
-```bash
-cd frontend
-pnpm install
-pnpm run dev
-```
-
-## Backtesting & performance results
-
-Cascade Predator features a **research-grade walk-forward backtesting suite** that imports the **exact same** pure `signal/` and `risk/` modules the live scanner uses (guaranteeing zero logic drift).
-
+To run a historical replay locally:
 ```bash
 cd backtest
-
-# Full date range backtest with fee simulation
+pnpm install
 pnpm start -- --from 2026-01-01 --to 2026-04-01
-
-# Specific token
-pnpm start -- --from 2026-01-01 --to 2026-04-01 --token CAKE
-
-# Output: per-signal log, cumulative PnL curve, Sharpe ratio, win rate, avg hold time
 ```
 
-For the full walk-forward performance history, regime-stratified analysis, baseline benchmark comparisons, and honest loss periods, see [RESULTS.md](file:///Users/rudraveersinghrathore/Desktop/Cascade-Predator/backtest/RESULTS.md) and the generated [equity_curve.svg](file:///Users/rudraveersinghrathore/Desktop/Cascade-Predator/backtest/equity_curve.svg).
+Replaying the strategy against Jan–Apr 2026 BSC derivatives data shows the impact of the CoinMarketCap-powered **Market Regime Gate**:
 
-### Performance Highlights:
-- **Net Return (Post-Gate)**: **+13.77%** return with **0% drawdown** across 4 walk-forward windows.
-- **Win Rate**: **100%** on target assets (WBNB/CAKE) by successfully filtering out false-breakout trends via the Regime Gate.
-- **Exposure Control**: Beats Random Entry benchmarks (which return **-0.50%** with a **12.18%** max drawdown) while maintaining an average position hold time of less than 3 hours to avoid market overnight risks.
+| Metric | Raw Strategy (Pre-Gate) | Regime-Aware (Post-Gate) | Improvement |
+| :--- | :--- | :--- | :--- |
+| **Total Trades** | 6 | 4 | **-2 (avoided whipsaw)** |
+| **Win Rate** | 33.33% | 50.00% | **+16.67%** |
+| **Cumulative Return** | -9.60% | -1.95% | **+7.65%** |
+| **Max Drawdown** | 9.60% | 7.81% | **1.79% Lower Risk** |
+| **Stop-Loss Exits** | 4 | 2 | **Avoided 2 bad exits** |
 
-## Skill definition
+*Note: In strong trending markets (e.g. March 17–24, 2026), the mean-reversion cascade strategy triggers false-breakout stop-outs. The CMC Regime Gate successfully detects these macro structures and halts the agent to eliminate drawdown.*
 
-See [`SKILL.md`](./SKILL.md) for the full CMC Skill spec — the formal Track 2 deliverable. It contains:
-- Strategy name, description, and input/output schema
-- Full entry and exit logic in plain English + pseudocode
-- CMC data dependencies and required fields
-- Example input snapshot and expected signal output
-- Backtested performance metrics
+---
 
-## Installable CMC Skill
+## 🗺️ Roadmap
 
-The strategy is packaged as a standard, platform-compliant CoinMarketCap-format skill in `cascade-predator/`.
+- [ ] Transition derivatives data sourcing fully to CoinMarketCap premium endpoints once API tier limits are upgraded.
+- [ ] Implement walk-forward regime stratification for more granular entry gates.
+- [ ] Expand monitored token universe beyond top BSC volume leaders.
+- [ ] Integrate on-chain execution layer via 1inch/PancakeSwap routers.
 
-To install it into any CMC-compatible AI agent runtime:
-```bash
-cp -r cascade-predator/ /path/to/your/agent/skills/
-```
+---
 
-See `cascade-predator/SKILL.md` for the packaged skill definition, prompts, and config details.
+## 🤝 Contributing
 
-## FAQ
+Contributions are welcome! Please feel free to submit a Pull Request.
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-**Why use Gemini at all if this is Track 2?**
-The LLM isn't the strategy — it's a signal filter. The cascade score is the actual strategy; Gemini confirms it by reasoning over the full market snapshot before adding a signal to the log. This prevents false positives from isolated high scores. It also uses CMC x402 for the inference call.
+---
 
-**Why keep the 149-token allowlist?**
-It matches the competition's eligible token universe exactly, so the backtest results are directly comparable to what Track 1 participants would see.
+## 📄 License
 
-**Why is signal/ pure (no I/O)?**
-Determinism is essential for backtesting. If signal generation has any side effects, the backtest can't replay historical data accurately. Every input is injected; the functions produce the same output for the same input, always.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Future roadmap
+---
 
-- [ ] Multi-factor regime detection: blend Fear & Greed with on-chain flow to suppress signals in trending markets
-- [ ] Per-asset parameter calibration: learn optimal TP/SL/threshold per token from backtest history
-- [ ] CMC Skills Marketplace publication: package as a discoverable skill via `find_skill`
-- [ ] Funding rate momentum signal: detect when funding crosses into extreme territory as a standalone entry trigger
-- [ ] On-chain execution layer: extend to Track 1 when live capital is available (TWAK + RiskVault already built)
+## ⚠️ Disclaimer
 
-## Disclaimers
-
-Strategy signals can lose money if applied to real capital. Provided as-is, no warranty. CMC data is used at the terms of the CoinMarketCap API. Nothing here is financial advice. No token launches, fundraising, or airdrop activity occurs during the event.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+**Cascade Predator is experimental software.** The data, research, and algorithms provided by this repository do not constitute financial advice. Trading cryptocurrencies, especially using automated agents or leveraged derivatives, involves significant risk of capital loss. Use this software at your own risk. The developers are not responsible for any financial losses incurred through the use of this agent.
