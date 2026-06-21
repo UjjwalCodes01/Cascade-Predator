@@ -58,5 +58,6 @@ model Snapshot {
   priceDeviation       Float
   fundingStress        Float
   fearGreed            Int
+  regimeGateBlocked    Boolean  @default(false)
   timestamp            DateTime @default(now())
 }

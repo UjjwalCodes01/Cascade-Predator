@@ -97,6 +97,12 @@ export class TradingLoop {
           `Liq~: $${snapshot.liquidations.toFixed(0)}`
         );
 
+        // Check if current regime is blocked
+        const blockedRegimesStr = process.env.BLOCKED_REGIMES || "trending_up,trending_strong_up,euphoric";
+        const blockedRegimes = blockedRegimesStr.split(",").map((r) => r.trim());
+        const currentRegime = snapshot.mcpReport?.market_regime;
+        const isRegimeBlocked = !!(currentRegime && blockedRegimes.includes(currentRegime));
+
         // Write per-tick snapshot to the database for live tracking on the dashboard
         await prisma.snapshot.create({
           data: {
@@ -106,6 +112,7 @@ export class TradingLoop {
             priceDeviation: signal.components.priceDeviation,
             fundingStress: signal.components.fundingStress,
             fearGreed: snapshot.fearGreed,
+            regimeGateBlocked: isRegimeBlocked,
           },
         }).catch((err) => {
           console.warn(`[loop] Failed to write snapshot for ${token}:`, err.message);

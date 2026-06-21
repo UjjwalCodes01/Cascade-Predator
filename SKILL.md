@@ -24,11 +24,12 @@ The cascade signal combines two complementary live data sources:
 | Source | Endpoint / Method | Fields Used | Why |
 |---|---|---|---|
 | **CoinMarketCap Agent Hub (MCP)** | `detect_market_regime` skill | `fear_greed_value`, `market_regime`, `leverage_state`, `liquidation_state`, `conviction` | Regime context — gates entries so the skill doesn't fire in trending/euphoric markets |
+| **CoinMarketCap REST (x402-metered)** | `GET /v5/cryptocurrency/derivatives/market-pairs/list/latest` | `funding_rate`, `open_interest` | CMC-native derivatives data (with automated Binance fallback on 402/403) |
 | **CoinMarketCap REST API** | `GET /v2/cryptocurrency/quotes/latest` | `price`, `volume_24h`, `percent_change_1h` | Spot price + recent momentum |
 | **CoinMarketCap REST API** | `GET /v3/fear-and-greed/latest` | `value` | Fallback regime input if the MCP call fails |
-| **Binance Futures (public API)** | `premiumIndex`, `openInterest`, `globalLongShortAccountRatio`, `takerlongshortRatio` | `lastFundingRate`, `openInterest`, taker buy/sell volume | Per-token derivatives — used to estimate liquidation intensity |
+| **Binance Futures (public API)** | `premiumIndex`, `openInterest`, `globalLongShortAccountRatio`, `takerlongshortRatio` | fallback funding, fallback open interest, taker buy/sell volume | Fallback derivatives, long/short account ratios, taker ratios |
 
-> **Note:** Per-token funding rate and open interest are sourced from Binance Futures because CMC's derivatives endpoints aggregate across exchanges, while cascade detection needs the venue-specific snapshot a single perp market sees. The regime layer (fear & greed, leverage/liquidation state, market regime) is sourced entirely from CMC via MCP. CMC-native derivatives sourcing is on the roadmap.
+> **Note:** Per-token data sourcing is configured in `config/data-sources.json`. CMC is the primary source for derivatives fields where supported (e.g. WBNB, CAKE); Binance Futures is used as the fallback when plan tier exceptions (HTTP 402/403) occur.
 
 ---
 

@@ -7,28 +7,36 @@ export const dynamic = "force-dynamic"; // never cache; this is live data
 
 export async function GET() {
   try {
-    // Latest metric row gives vault balance, daily volume/count, drawdown
-    const latestMetric = await prisma.metric.findFirst({
-      orderBy: { timestamp: "desc" },
-    });
+    let latestMetric = null;
+    let openPositions: any[] = [];
+    let recentTrades: any[] = [];
+    let recentSnapshots: any[] = [];
 
-    // Open position(s), if any
-    const openPositions = await prisma.position.findMany({
-      where: { status: "open" },
-      orderBy: { openedAt: "desc" },
-    });
-
-    // Most recent trades
-    const recentTrades = await prisma.trade.findMany({
-      orderBy: { timestamp: "desc" },
-      take: 50,
-    });
-
-    // Most recent snapshots (written per-tick by agent)
-    const recentSnapshots = await prisma.snapshot.findMany({
-      orderBy: { timestamp: "desc" },
-      take: 50,
-    });
+    try {
+      const [metric, positions, trades, snapshots] = await Promise.all([
+        prisma.metric.findFirst({
+          orderBy: { timestamp: "desc" },
+        }),
+        prisma.position.findMany({
+          where: { status: "open" },
+          orderBy: { openedAt: "desc" },
+        }),
+        prisma.trade.findMany({
+          orderBy: { timestamp: "desc" },
+          take: 50,
+        }),
+        prisma.snapshot.findMany({
+          orderBy: { timestamp: "desc" },
+          take: 50,
+        }),
+      ]);
+      latestMetric = metric;
+      openPositions = positions;
+      recentTrades = trades;
+      recentSnapshots = snapshots;
+    } catch (dbError: any) {
+      console.warn("[snapshot-api] Database query failed, returning empty state:", dbError.message);
+    }
 
     return NextResponse.json({
       metric: latestMetric,

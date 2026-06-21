@@ -25,7 +25,17 @@ from typing import Optional
 from google import genai
 from google.genai import types as genai_types
 
+from pathlib import Path
 from tokens import get_token_info, get_token_address
+
+# Load config/data-sources.json relative to the script
+config_path = Path(__file__).parent.parent / "config" / "data-sources.json"
+try:
+    with open(config_path, "r") as f:
+        DATA_SOURCES = json.load(f)
+except Exception as e:
+    print(f"[data] Failed to load data-sources.json: {e}. Defaulting to empty matrix.")
+    DATA_SOURCES = {}
 
 # ── Configuration (read from env, same as TypeScript agent) ──────────────────
 
@@ -252,25 +262,59 @@ async def fetch_market_regime_from_mcp() -> dict:
         raise RuntimeError("No event:message data found in MCP stream response")
 
 
+async def fetch_cmc_derivatives_data(cmc_symbol: str) -> dict:
+    """
+    Fetches funding rate and open interest from CMC derivatives market-pairs v5 endpoint.
+    Raises httpx.HTTPStatusError on 402/403 to trigger fallback.
+    """
+    url = "https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            url,
+            headers=CMC_HEADERS,
+            params={"crypto_symbol": cmc_symbol}
+        )
+        if resp.status_code in (402, 403):
+            resp.raise_for_status()
+        resp.raise_for_status()
+        
+        data = resp.json().get("data", [])
+        
+        total_oi = 0.0
+        funding_rate_sum = 0.0
+        funding_rate_count = 0
+        
+        for pair in data:
+            if pair.get("category") in ("perpetual", "futures"):
+                quotes = pair.get("quotes", [])
+                eq = pair.get("exchange_reported_quotes", [])
+                q = quotes[0] if quotes else (eq[0] if eq else None)
+                
+                if q:
+                    oi = q.get("open_interest")
+                    if oi is not None:
+                        total_oi += float(oi)
+                        
+                    fr = q.get("funding_rate")
+                    if fr is not None:
+                        funding_rate_sum += float(fr)
+                        funding_rate_count += 1
+                        
+        funding_rate = funding_rate_sum / funding_rate_count if funding_rate_count > 0 else 0.0001
+        return {
+            "fundingRate": funding_rate,
+            "openInterest": total_oi
+        }
+
+
 async def fetch_market_snapshot(token: str) -> MarketSnapshot:
     """
-    Fetch live spot price + Fear & Greed index from CMC (using MCP or fallback REST), and derivatives from Binance.
+    Fetch live spot price + Fear & Greed index from CMC (using MCP or fallback REST), and derivatives.
     """
     token_info = get_token_info(token)
 
-    # 1. Try to fetch from CoinMarketCap Agent Hub (MCP) first
-    fear_greed = 50
-    mcp_report = None
-    try:
-        mcp_data = await fetch_market_regime_from_mcp()
-        fear_greed = mcp_data["fear_greed_value"]
-        mcp_report = mcp_data
-        print(f"[mcp] Successfully fetched Fear & Greed ({fear_greed}) and Regime ({mcp_data['market_regime']}) from CMC Agent Hub.")
-    except Exception as e:
-        print(f"[mcp] CMC Agent Hub call failed: {e}. Falling back to REST API.")
-        
+    # 1. Spot price
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # 2. Spot price, volume, pctChange1h
         quote_resp = await client.get(
             f"{CMC_BASE}/v2/cryptocurrency/quotes/latest",
             headers=CMC_HEADERS,
@@ -280,14 +324,20 @@ async def fetch_market_snapshot(token: str) -> MarketSnapshot:
         raw = quote_resp.json()["data"][token_info["cmcSymbol"]]
         entry = raw[0] if isinstance(raw, list) else raw
         quote_data = entry["quote"]["USD"]
-
         price = float(quote_data["price"])
-        volume_24h = float(quote_data.get("volume_24h", 0.0))
-        percent_change_1h = float(quote_data.get("percent_change_1h", 0.0))
 
-        # 3. Fallback Fear & Greed if MCP failed
-        if mcp_report is None:
-            try:
+    # 2. Market regime
+    fear_greed = 50
+    mcp_report = None
+    try:
+        mcp_data = await fetch_market_regime_from_mcp()
+        fear_greed = mcp_data["fear_greed_value"]
+        mcp_report = mcp_data
+        print(f"[mcp] Successfully fetched Fear & Greed ({fear_greed}) and Regime ({mcp_data['market_regime']}) from CMC Agent Hub.")
+    except Exception as e:
+        print(f"[mcp] CMC Agent Hub call failed: {e}. Falling back to REST API.")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 fg_resp = await client.get(
                     f"{CMC_BASE}/v3/fear-and-greed/latest",
                     headers=CMC_HEADERS
@@ -295,30 +345,99 @@ async def fetch_market_snapshot(token: str) -> MarketSnapshot:
                 if fg_resp.status_code == 200:
                     fg_data = fg_resp.json().get("data", {})
                     fear_greed = int(fg_data.get("value", 50))
-            except Exception as e:
-                print(f"[data] Failed to fetch CMC Fear & Greed fallback: {e}")
+        except Exception as rest_e:
+            print(f"[data] Failed to fetch CMC Fear & Greed fallback: {rest_e}")
 
-    # 4. Derivatives via Binance
-    derivs = {
-        "fundingRate": 0.0001,
-        "openInterest": 0.0,
-        "liquidations": 0.0,
-        "longShortRatio": 1.0,
-        "takerBuySellRatio": 1.0
-    }
-    if token_info["futuresPair"]:
-        derivs = await fetch_futures_data(token_info["futuresPair"], price)
+    # 3. Derivatives
+    sources = DATA_SOURCES.get(token.upper(), {
+        "fundingRate": "binance",
+        "openInterest": "binance",
+        "liquidations": "binance"
+    })
+
+    funding_rate = 0.0001
+    open_interest = 0.0
+    liquidations = 0.0
+
+    binance_derivs = None
+    async def get_binance_derivs():
+        nonlocal binance_derivs
+        if binance_derivs is None and token_info["futuresPair"]:
+            binance_derivs = await fetch_futures_data(token_info["futuresPair"], price)
+        return binance_derivs or {
+            "fundingRate": 0.0001,
+            "openInterest": 0.0,
+            "liquidations": 0.0,
+            "longShortRatio": 1.0,
+            "takerBuySellRatio": 1.0
+        }
+
+    # Sourcing Funding Rate
+    if sources.get("fundingRate") == "cmc":
+        try:
+            cmc_data = await fetch_cmc_derivatives_data(token_info["cmcSymbol"])
+            funding_rate = cmc_data["fundingRate"]
+        except Exception as e:
+            is_tier_err = False
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (402, 403):
+                is_tier_err = True
+            elif "402" in str(e) or "403" in str(e):
+                is_tier_err = True
+
+            if is_tier_err:
+                print(f"[data] CMC derivatives returned 402/403 plan error. Falling back to Binance.")
+                bd = await get_binance_derivs()
+                funding_rate = bd["fundingRate"]
+            else:
+                raise e
+    else:
+        bd = await get_binance_derivs()
+        funding_rate = bd["fundingRate"]
+
+    # Sourcing Open Interest
+    if sources.get("openInterest") == "cmc":
+        try:
+            cmc_data = await fetch_cmc_derivatives_data(token_info["cmcSymbol"])
+            open_interest = cmc_data["openInterest"]
+        except Exception as e:
+            is_tier_err = False
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (402, 403):
+                is_tier_err = True
+            elif "402" in str(e) or "403" in str(e):
+                is_tier_err = True
+
+            if is_tier_err:
+                print(f"[data] CMC derivatives returned 402/403 plan error. Falling back to Binance.")
+                bd = await get_binance_derivs()
+                open_interest = bd["openInterest"]
+            else:
+                raise e
+    else:
+        bd = await get_binance_derivs()
+        open_interest = bd["openInterest"]
+
+    # Sourcing Liquidations
+    if sources.get("liquidations") == "cmc":
+        bd = await get_binance_derivs()
+        liquidations = bd["liquidations"]
+    else:
+        bd = await get_binance_derivs()
+        liquidations = bd["liquidations"]
+
+    bd = await get_binance_derivs()
+    long_short_ratio = bd["longShortRatio"]
+    taker_buy_sell_ratio = bd["takerBuySellRatio"]
 
     return MarketSnapshot(
         token=token,
-        fundingRate=derivs["fundingRate"],
-        openInterest=derivs["openInterest"],
-        liquidations=derivs["liquidations"],
+        fundingRate=funding_rate,
+        openInterest=open_interest,
+        liquidations=liquidations,
         price=price,
         fearGreed=fear_greed,
         timestamp=int(time.time() * 1000),
-        longShortRatio=derivs["longShortRatio"],
-        takerBuySellRatio=derivs["takerBuySellRatio"],
+        longShortRatio=long_short_ratio,
+        takerBuySellRatio=taker_buy_sell_ratio,
         mcpReport=mcp_report
     )
 
@@ -671,6 +790,7 @@ async def analyze_token(token: str) -> dict:
             "cascadeScore": 0,
             "confidence": 0,
             "reason": f"Market data fetch failed: {exc}",
+            "regime_gate_blocked": False,
         }
 
     # 2. Update rolling price history (SQLite persisted)
@@ -680,6 +800,26 @@ async def analyze_token(token: str) -> dict:
     # 3. Compute cascade score (pure function)
     cascade_score, components = compute_cascade_score(snapshot, history)
 
+    # Check if current regime is blocked
+    blocked_regimes_str = os.environ.get("BLOCKED_REGIMES", "trending_up,trending_strong_up,euphoric")
+    blocked_regimes = [r.strip() for r in blocked_regimes_str.split(",")]
+    current_regime = None
+    if snapshot.mcpReport:
+        current_regime = snapshot.mcpReport.get("market_regime")
+    is_regime_blocked = bool(current_regime and current_regime in blocked_regimes)
+
+    if is_regime_blocked:
+        print(f"[decision] ⏸ Regime gate active: cascade strategy blocked in '{current_regime}' regime. Standing aside.")
+        return {
+            "signal": None,
+            "cascadeScore": cascade_score,
+            "components": asdict(components),
+            "confidence": 0,
+            "reason": f"Cascade strategy blocked in '{current_regime}' regime. Standing aside.",
+            "regime_gate_blocked": True,
+            "market": asdict(snapshot),
+        }
+
     # 4. Pre-filter: don't call LLM for weak signals (saves API cost)
     if cascade_score < 40:
         return {
@@ -688,6 +828,7 @@ async def analyze_token(token: str) -> dict:
             "components": asdict(components),
             "confidence": 0,
             "reason": f"cascadeScore {cascade_score} below pre-filter threshold 40",
+            "regime_gate_blocked": is_regime_blocked,
         }
 
     # 5. TWAK Risk Assessment (L2 Security Check)
@@ -700,6 +841,7 @@ async def analyze_token(token: str) -> dict:
             "confidence": 0,
             "reason": risk_result["reason"],
             "market": asdict(snapshot),
+            "regime_gate_blocked": is_regime_blocked,
         }
 
     # 6. LLM confirmation
@@ -714,6 +856,7 @@ async def analyze_token(token: str) -> dict:
             "confidence": confidence,
             "reason": reasoning,
             "market": asdict(snapshot),
+            "regime_gate_blocked": is_regime_blocked,
         }
 
     # 8. Approved — build full signal
@@ -744,4 +887,5 @@ async def analyze_token(token: str) -> dict:
         "confidence": confidence,
         "reasoning": reasoning,
         "market": asdict(snapshot),
+        "regime_gate_blocked": is_regime_blocked,
     }

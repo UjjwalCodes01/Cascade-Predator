@@ -1,19 +1,102 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0b0d;
-  --foreground: #f3f4f6;
+  /* Color tokens */
+  --cs-bg-deep: #0a0b0d;          /* near-black, faint cool cast */
+  --cs-bg-card: #111316;
+  --cs-stroke: rgba(255,255,255,0.06);
+  --cs-text-primary: #e9edf2;
+  --cs-text-muted: #6c7480;
+
+  /* Score band colors */
+  --cs-quiet: #4d6478;             /* cool steel — score 0-40 */
+  --cs-warm: #d99257;              /* warm amber — score 40-70 */
+  --cs-hot: #e34b3a;                /* signal red — score 70-100 */
+
+  /* Position state */
+  --cs-positive: #5fb38a;
+  --cs-negative: #e34b3a;
+
+  /* Motion */
+  --cs-ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-mono);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
+  background: var(--cs-bg-deep);
+  color: var(--cs-text-primary);
+  font-family: var(--font-mono);
+}
+
+.font-display { font-family: var(--font-serif); }
+.font-data    { font-family: var(--font-mono); }
+
+@keyframes orb-pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-orb-pulse {
+  animation: orb-pulse var(--orb-pulse-duration, 2s) ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Hairline ignition line animation */
+@keyframes ignition-line {
+  0% {
+    stroke-dashoffset: 1000;
+    opacity: 0.8;
+  }
+  70% {
+    stroke-dashoffset: 0;
+    opacity: 0.8;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+.animate-ignition-line {
+  stroke-dasharray: 1000;
+  animation: ignition-line 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Key prop re-triggerable scale animation for numeral */
+@keyframes numeral-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-numeral-pop {
+  animation: numeral-pop 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-orb-pulse, .animate-ignition-line, .animate-numeral-pop {
+    animation: none !important;
+    transform: scale(1) !important;
+    opacity: 1 !important;
+    stroke-dashoffset: 0 !important;
+  }
 }

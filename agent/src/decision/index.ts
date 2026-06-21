@@ -163,8 +163,19 @@ export class DecisionService {
     currentPrice: number,
     snapshot?: MarketSnapshot
   ): Promise<TradeIntent | null> {
+    if (snapshot) {
+      const blockedRegimesStr = process.env.BLOCKED_REGIMES || "trending_up,trending_strong_up,euphoric";
+      const blockedRegimes = blockedRegimesStr.split(",").map((r) => r.trim());
+      const regime = snapshot.mcpReport?.market_regime;
+      if (regime && blockedRegimes.includes(regime)) {
+        console.warn(`[decision] ⏸ Regime gate active: cascade strategy blocked in "${regime}" regime. Standing aside.`);
+        return null;
+      }
+    }
+
     const cost = "0.0005";
     const resource = `llm/verify/${signal.token}`;
+
 
     return X402Service.executeWithPayment<TradeIntent | null>(
       async (paymentHeader) => {

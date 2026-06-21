@@ -1,6 +1,16 @@
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 import { config } from "../config/index.js";
 import { X402Service } from "../x402/index.js";
 import { getTokenInfo } from "../tokens/index.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load data sources configuration matrix
+const dataSourcesPath = resolve(__dirname, "../../../config/data-sources.json");
+const dataSources = JSON.parse(readFileSync(dataSourcesPath, "utf-8"));
 
 export interface MarketSnapshot {
   token: string;
@@ -151,6 +161,59 @@ async function fetchCmcSpotData(cmcSymbol: string): Promise<{
     pctChange1h: q.percent_change_1h,
     pctChange24h: q.percent_change_24h,
   };
+}
+
+async function fetchCmcDerivativesData(cmcSymbol: string): Promise<{
+  fundingRate: number;
+  openInterest: number;
+}> {
+  const cmcUrl = `https://pro-api.coinmarketcap.com/v5/cryptocurrency/derivatives/market-pairs/list/latest?crypto_symbol=${cmcSymbol}`;
+  const cost = "0.02";
+
+  const rawData = await X402Service.executeWithPayment<any>(
+    async (paymentHeader) => {
+      if (!paymentHeader) {
+        return { status: 402 };
+      }
+
+      const headers: Record<string, string> = {
+        "X-CMC_PRO_API_KEY": config.CMC_API_KEY,
+        "Accept": "application/json",
+        "Authorization": paymentHeader,
+      };
+      const r = await fetch(cmcUrl, { headers });
+      return { status: r.status, data: r.status === 200 ? await r.json() : undefined };
+    },
+    `cmc/derivatives/${cmcSymbol}`,
+    cost
+  );
+
+  const data = rawData?.data;
+  if (!data || !Array.isArray(data)) {
+    throw new Error(`[data] CMC derivatives endpoint returned invalid data structure`);
+  }
+
+  let totalOi = 0;
+  let fundingRateSum = 0;
+  let fundingRateCount = 0;
+
+  for (const pair of data) {
+    if (pair.category === "perpetual" || pair.category === "futures") {
+      const q = pair.quotes?.[0] || pair.exchange_reported_quotes?.[0];
+      if (q) {
+        if (q.open_interest) {
+          totalOi += q.open_interest;
+        }
+        if (q.funding_rate !== null && q.funding_rate !== undefined) {
+          fundingRateSum += q.funding_rate;
+          fundingRateCount++;
+        }
+      }
+    }
+  }
+
+  const fundingRate = fundingRateCount > 0 ? (fundingRateSum / fundingRateCount) : 0.0001;
+  return { fundingRate, openInterest: totalOi };
 }
 
 interface McpRegimeReport {
@@ -306,28 +369,84 @@ export class DataService {
         fearGreed = await fetchFearGreedFallback();
       }
 
-      // 3. Fetch real derivatives data from Binance Futures (if a futures pair exists)
-      let derivs = {
-        fundingRate: 0.0001 as number,
-        openInterest: 0 as number,
-        liquidations: 0 as number,
-        longShortRatio: 1 as number,
-        takerBuySellRatio: 1 as number,
+      // 3. Fetch real derivatives data from CMC and/or Binance Futures
+      const sources = dataSources[token] || { fundingRate: "binance", openInterest: "binance", liquidations: "binance" };
+
+      let fundingRate = 0.0001;
+      let openInterest = 0;
+      let liquidations = 0;
+
+      // Fetch Binance data if needed as fallback or primary
+      let binanceDerivs: any = null;
+      const getBinanceDerivs = async () => {
+        if (!binanceDerivs && tokenInfo.futuresPair) {
+          binanceDerivs = await fetchFuturesData(tokenInfo.futuresPair, spot.price);
+        }
+        return binanceDerivs || { fundingRate: 0.0001, openInterest: 0, liquidations: 0, longShortRatio: 1, takerBuySellRatio: 1 };
       };
-      if (tokenInfo.futuresPair) {
-        derivs = await fetchFuturesData(tokenInfo.futuresPair, spot.price);
+
+      // 3a. Sourcing Funding Rate
+      if (sources.fundingRate === "cmc") {
+        try {
+          const cmcDerivs = await fetchCmcDerivativesData(tokenInfo.cmcSymbol);
+          fundingRate = cmcDerivs.fundingRate;
+        } catch (err: any) {
+          if (err.message?.includes("status: 402") || err.message?.includes("status: 403")) {
+            console.warn(`[data] CMC derivatives API returned 402/403. Falling back to Binance futures for funding rate.`);
+            const bd = await getBinanceDerivs();
+            fundingRate = bd.fundingRate;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        const bd = await getBinanceDerivs();
+        fundingRate = bd.fundingRate;
       }
+
+      // 3b. Sourcing Open Interest
+      if (sources.openInterest === "cmc") {
+        try {
+          const cmcDerivs = await fetchCmcDerivativesData(tokenInfo.cmcSymbol);
+          openInterest = cmcDerivs.openInterest;
+        } catch (err: any) {
+          if (err.message?.includes("status: 402") || err.message?.includes("status: 403")) {
+            console.warn(`[data] CMC derivatives API returned 402/403. Falling back to Binance futures for open interest.`);
+            const bd = await getBinanceDerivs();
+            openInterest = bd.openInterest;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        const bd = await getBinanceDerivs();
+        openInterest = bd.openInterest;
+      }
+
+      // 3c. Sourcing Liquidations
+      if (sources.liquidations === "cmc") {
+        const bd = await getBinanceDerivs();
+        liquidations = bd.liquidations;
+      } else {
+        const bd = await getBinanceDerivs();
+        liquidations = bd.liquidations;
+      }
+
+      // Fetch remaining longShortRatio and takerBuySellRatio from Binance
+      const bd = await getBinanceDerivs();
+      const longShortRatio = bd?.longShortRatio ?? 1;
+      const takerBuySellRatio = bd?.takerBuySellRatio ?? 1;
 
       return {
         token,
-        fundingRate: derivs.fundingRate,
-        openInterest: derivs.openInterest,
-        liquidations: derivs.liquidations,
+        fundingRate,
+        openInterest,
+        liquidations,
         price: spot.price,
         fearGreed,
         timestamp: Date.now(),
-        longShortRatio: derivs.longShortRatio,
-        takerBuySellRatio: derivs.takerBuySellRatio,
+        longShortRatio,
+        takerBuySellRatio,
         mcpReport,
       };
     } catch (error) {

@@ -20,13 +20,19 @@ export class BacktestReplay {
     private threshold: number = 70,
     private takeProfitPct: number = 3.0,
     private stopLossPct: number = 1.5,
-    private exitTimeout: number = 12
+    private exitTimeout: number = 12,
+    private useRegimeGate: boolean = false
   ) {}
 
   /**
    * Run replay on historical snapshots.
    */
   run(snapshots: MarketSnapshot[]): BacktestTrade[] {
+    // Clear state for clean run
+    this.tokenHistory.clear();
+    this.activePositions.clear();
+    this.completedTrades = [];
+
     // Sort snapshots chronologically
     const sorted = [...snapshots].sort((a, b) => a.timestamp - b.timestamp);
 
@@ -87,6 +93,16 @@ export class BacktestReplay {
       } else {
         // 3. Evaluate entry signal
         if (scoreSignal.cascadeScore >= this.threshold && snap.fearGreed < 60) {
+          // Check regime gate if active
+          if (this.useRegimeGate) {
+            const blockedRegimesStr = process.env.BLOCKED_REGIMES || "trending_up,trending_strong_up,euphoric";
+            const blockedRegimes = blockedRegimesStr.split(",").map((r) => r.trim());
+            const regime = snap.mcpReport?.market_regime;
+            if (regime && blockedRegimes.includes(regime)) {
+              continue;
+            }
+          }
+
           // Enter position
           this.activePositions.set(token, {
             token,

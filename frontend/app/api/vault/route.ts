@@ -6,8 +6,15 @@ export const dynamic = "force-dynamic";
 export const revalidate = 5; // cache for 5s; cheap relief on the RPC
 
 export async function GET() {
-  const rpcUrl = process.env.BSC_RPC_URL || "https://bsc-testnet.publicnode.com";
-  const vaultAddress = process.env.NEXT_PUBLIC_RISK_VAULT_ADDRESS || "0xd69B4f5FAF6E3626F1E9C595a170F388798f713D";
+  const rpcUrl = process.env.BSC_RPC_URL;
+  const vaultAddress = process.env.NEXT_PUBLIC_RISK_VAULT_ADDRESS;
+
+  if (!rpcUrl || !vaultAddress) {
+    return NextResponse.json(
+      { error: "Server misconfigured: BSC_RPC_URL or NEXT_PUBLIC_RISK_VAULT_ADDRESS is not set." },
+      { status: 500 }
+    );
+  }
 
   try {
     const provider = new JsonRpcProvider(rpcUrl);

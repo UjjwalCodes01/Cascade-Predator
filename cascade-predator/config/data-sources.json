@@ -1,0 +1,37 @@
+{
+  "WBNB": {
+    "fundingRate": "cmc",
+    "openInterest": "cmc",
+    "liquidations": "binance"
+  },
+  "CAKE": {
+    "fundingRate": "cmc",
+    "openInterest": "cmc",
+    "liquidations": "binance"
+  },
+  "FLOKI": {
+    "fundingRate": "cmc",
+    "openInterest": "cmc",
+    "liquidations": "binance"
+  },
+  "TWT": {
+    "fundingRate": "binance",
+    "openInterest": "binance",
+    "liquidations": "binance"
+  },
+  "ETH": {
+    "fundingRate": "cmc",
+    "openInterest": "cmc",
+    "liquidations": "binance"
+  },
+  "BTC": {
+    "fundingRate": "cmc",
+    "openInterest": "cmc",
+    "liquidations": "binance"
+  },
+  "PENDLE": {
+    "fundingRate": "cmc",
+    "openInterest": "cmc",
+    "liquidations": "binance"
+  }
+}
