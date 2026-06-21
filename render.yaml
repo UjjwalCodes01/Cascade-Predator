@@ -10,8 +10,14 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      - key: GEMINI_API_KEY
+      - key: USE_VERTEX_AI
+        value: "true"
+      - key: GOOGLE_CLOUD_PROJECT
         sync: false
+      - key: GOOGLE_CLOUD_LOCATION
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false # Set this in Render dashboard by uploading your service-account.json as a Secret File
       - key: PRIVATE_KEY
         sync: false
 
@@ -28,8 +34,14 @@ services:
         value: 20.14.0
       - key: DATABASE_URL
         sync: false
-      - key: GEMINI_API_KEY
+      - key: USE_VERTEX_AI
+        value: "true"
+      - key: GOOGLE_CLOUD_PROJECT
         sync: false
+      - key: GOOGLE_CLOUD_LOCATION
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false # Set this in Render dashboard by uploading your service-account.json as a Secret File
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
