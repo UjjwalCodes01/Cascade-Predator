@@ -3,6 +3,7 @@ services:
   - type: web
     name: cascade-skill-server
     env: python
+    plan: free # Force the free tier
     rootDir: skill-server
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
@@ -14,13 +15,13 @@ services:
       - key: PRIVATE_KEY
         sync: false
 
-  # TypeScript Agent (Background Worker)
-  - type: worker
+  # TypeScript Agent (Free Web Service Hack)
+  - type: web
     name: cascade-agent
     env: node
+    plan: free # Force the free tier
     rootDir: agent
     buildCommand: npm install -g pnpm && pnpm install && pnpm run db:generate && pnpm run build
-    # Defaulting to paper trading. Change to 'pnpm run live' if doing Track 1 live trading.
     startCommand: pnpm run paper
     envVars:
       - key: NODE_VERSION
@@ -34,5 +35,4 @@ services:
       - key: RPC_URL
         sync: false
       - key: SKILL_SERVER_URL
-        # Set this manually in the Render dashboard to the URL of the cascade-skill-server above once deployed
         sync: false

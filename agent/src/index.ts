@@ -1,4 +1,5 @@
 import { TradingLoop } from "./loop/index.js";
+import * as http from "http";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -10,6 +11,18 @@ async function main() {
   console.log(`========================================================`);
   console.log(`Mode selected: ${mode.toUpperCase()}`);
   console.log(`========================================================`);
+
+  // --- DUMMY HTTP SERVER FOR RENDER FREE TIER ---
+  // Render requires web services to bind to a port within 60 seconds.
+  const port = process.env.PORT || 10000;
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Cascade Predator Agent is running. Status: OK");
+  });
+  server.listen(port, () => {
+    console.log(`[main] Dummy HTTP server listening on port ${port} to satisfy Render health checks.`);
+  });
+  // ----------------------------------------------
 
   const loop = new TradingLoop(mode);
 
