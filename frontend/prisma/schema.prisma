@@ -34,11 +34,11 @@ model Position {
 }
 
 model X402Ledger {
-  id          String   @id @default(uuid())
-  resource    String
-  amountSpent String
-  txHash      String?
-  timestamp   DateTime @default(now())
+  id           String   @id @default(uuid())
+  resource     String
+  amountSpent  String
+  paymentProof String?
+  timestamp    DateTime @default(now())
 }
 
 model Metric {
@@ -48,4 +48,15 @@ model Metric {
   dailyVolume  String
   dailyCount   Int
   drawdownPct  Float
+}
+
+model Snapshot {
+  id                   String   @id @default(uuid())
+  token                String
+  cascadeScore         Float
+  liquidationIntensity Float
+  priceDeviation       Float
+  fundingStress        Float
+  fearGreed            Int
+  timestamp            DateTime @default(now())
 }

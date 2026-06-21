@@ -571,7 +571,7 @@ async def consult_gemini(
     Call Gemini to confirm the signal. Returns (approved, confidence, reasoning).
     Falls back to (threshold_check, 0, reason) if call fails.
     """
-    use_vertex = USE_VERTEX_AI or not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here"
+    use_vertex = USE_VERTEX_AI or bool(GOOGLE_CLOUD_PROJECT) or not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here"
     
     if not use_vertex and (not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here"):
         approved = cascade_score >= CASCADE_THRESHOLD

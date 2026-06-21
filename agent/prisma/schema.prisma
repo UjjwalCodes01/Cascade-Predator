@@ -49,3 +49,15 @@ model Metric {
   dailyCount   Int
   drawdownPct  Float
 }
+
+model Snapshot {
+  id                   String   @id @default(uuid())
+  token                String
+  cascadeScore         Float
+  liquidationIntensity Float
+  priceDeviation       Float
+  fundingStress        Float
+  fearGreed            Int
+  timestamp            DateTime @default(now())
+}
+

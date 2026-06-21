@@ -52,7 +52,7 @@ A liquidation cascade occurs when large leveraged positions get forcefully close
 let _geminiClient: GoogleGenAI | null = null;
 
 function getGeminiClient(): GoogleGenAI | null {
-  const useVertex = config.USE_VERTEX_AI === "true" || !config.GEMINI_API_KEY || config.GEMINI_API_KEY === "your_gemini_api_key_here";
+  const useVertex = config.USE_VERTEX_AI === "true" || !!config.GOOGLE_CLOUD_PROJECT || !config.GEMINI_API_KEY || config.GEMINI_API_KEY === "your_gemini_api_key_here";
 
   if (!_geminiClient) {
     if (useVertex) {
@@ -186,7 +186,7 @@ export class DecisionService {
         // ── LLM decision (Gemini) ─────────────────────────────────────
         let approved = false;
         let llmReasoning = "Threshold-only mode (no Gemini API key or Vertex AI configured)";
-        const hasGemini = config.USE_VERTEX_AI === "true" || (!!config.GEMINI_API_KEY && config.GEMINI_API_KEY !== "your_gemini_api_key_here");
+        const hasGemini = config.USE_VERTEX_AI === "true" || !!config.GOOGLE_CLOUD_PROJECT || (!!config.GEMINI_API_KEY && config.GEMINI_API_KEY !== "your_gemini_api_key_here");
 
         if (hasGemini && snapshot) {
           console.log(`[decision] Consulting Gemini (${config.GEMINI_MODEL})...`);

@@ -97,6 +97,21 @@ export class TradingLoop {
           `Liq~: $${snapshot.liquidations.toFixed(0)}`
         );
 
+        // Write per-tick snapshot to the database for live tracking on the dashboard
+        await prisma.snapshot.create({
+          data: {
+            token,
+            cascadeScore: signal.cascadeScore,
+            liquidationIntensity: signal.components.liquidationIntensity,
+            priceDeviation: signal.components.priceDeviation,
+            fundingStress: signal.components.fundingStress,
+            fearGreed: snapshot.fearGreed,
+          },
+        }).catch((err) => {
+          console.warn(`[loop] Failed to write snapshot for ${token}:`, err.message);
+        });
+
+
         // 3. If score crosses threshold, evaluate entry
         if (signal.cascadeScore >= config.CASCADE_SCORE_THRESHOLD) {
           console.warn(`[loop] ⚡ CASCADE SIGNAL for ${token}: ${signal.cascadeScore}%`);
