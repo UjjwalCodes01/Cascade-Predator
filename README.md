@@ -7,33 +7,50 @@
 > **Market Regime-Aware Liquidation Cascade Hunter on BNB Chain**  
 > Powered by CoinMarketCap Agent Hub (MCP), Trust Wallet Agent Kit (TWAK), and BNB Chain.
 
-Cascade Predator is an autonomous trading agent and strategy skill designed to detect and profit from liquidation cascades on BNB Chain. It combines macro sentiment regime-awareness (to avoid trading in high-conviction uptrends) with deep on-chain derivatives data analysis (to identify forced deleveraging events).
+Cascade Predator is a fully autonomous trading agent, strategy skill, and research dashboard engineered to detect and profit from **liquidation cascades** on BNB Chain. It combines macro sentiment regime-awareness (to avoid trading in high-conviction uptrends) with deep on-chain derivatives data analysis (to identify forced deleveraging events).
 
 ---
 
 ## 📑 Table of Contents
-- [Motivation](#-motivation)
-- [Architecture](#-architecture)
-- [Key Features](#-key-features)
-- [Tech Stack](#-tech-stack)
-- [Project Structure](#-project-structure)
-- [Prerequisites](#-prerequisites)
-- [Quick Start & Deployment](#-quick-start--deployment)
-- [Backtest Performance](#-backtest-performance)
-- [Roadmap](#-roadmap)
-- [Contributing](#-contributing)
-- [License](#-license)
-- [Disclaimer](#-disclaimer)
+1. [Executive Summary](#1-executive-summary)
+2. [Core Thesis: The Liquidation Cascade](#2-core-thesis-the-liquidation-cascade)
+3. [Architecture Deep-Dive](#3-architecture-deep-dive)
+4. [The Cascade Algorithm](#4-the-cascade-algorithm)
+5. [Trust Wallet Agent Kit (TWAK) & x402 Security](#5-trust-wallet-agent-kit-twak--x402-security)
+6. [Resilience & Fallbacks](#6-resilience--fallbacks)
+7. [Project Structure](#7-project-structure)
+8. [Deployment & Quick Start](#8-deployment--quick-start)
+9. [Backtest Research](#9-backtest-research)
+10. [Roadmap](#10-roadmap)
+11. [License & Disclaimer](#11-license--disclaimer)
 
 ---
 
-## 💡 Motivation
+## 1. Executive Summary
 
-In high-leverage decentralized markets, liquidation cascades pose significant risks for retail traders, but they also create the most profitable mean-reversion opportunities if detected early. Cascade Predator aims to democratize institutional-grade cascade detection. By leveraging CoinMarketCap's market sentiment data and Trust Wallet's Agent Kit for secure, decentralized API payments, we provide a robust, self-custodial engine for navigating extreme market volatility.
+Most algorithmic trading systems fail because they treat all market environments the same. Cascade Predator solves this by splitting the problem into two distinct layers:
+1. **The Macro Layer (Regime Gate)**: Uses CoinMarketCap's Agent Hub via a Python Skill Server to analyze fear, greed, and leverage states. It self-disables trading during highly euphoric, trending markets to prevent whipsaws.
+2. **The Micro Layer (Execution)**: A TypeScript daemon monitors specific BNB Chain assets (WBNB, CAKE, FLOKI). When open interest spikes alongside extreme funding rates and lopsided taker volume, the agent calculates a "Cascade Score" and executes a mean-reversion trade.
 
 ---
 
-## 🏗️ Architecture
+## 2. Core Thesis: The Liquidation Cascade
+
+In decentralized perpetual futures, traders use high leverage. When a market moves sharply in one direction, underwater positions are forcibly closed (liquidated) by the protocol. 
+
+This creates a **Cascade**:
+* A sudden price drop triggers long liquidations.
+* The liquidation engine sells the asset at market price, driving the price down further.
+* This triggers *more* liquidations.
+* The result is a sharp, unnatural price wick followed by an immediate **mean-reversion bounce**.
+
+**Cascade Predator hunts for the bounce.** By monitoring the precursors to a cascade (high open interest + extreme funding rates), the agent prepares to enter a position precisely when the cascade exhausts itself, capturing the mean-reversion profit.
+
+---
+
+## 3. Architecture Deep-Dive
+
+Cascade Predator is built as a microservice architecture, ensuring separation of concerns between data analysis, secure execution, and user interface.
 
 ```text
                                   [ CoinMarketCap Agent Hub (MCP) ]
@@ -43,102 +60,144 @@ In high-leverage decentralized markets, liquidation cascades pose significant ri
        (Vercel)                 (Render Daemon, TWAK, x402)       (Render ERC-8183 Web App)
 ```
 
-1. **Python Skill Server (ERC-8183)**: Houses the market regime detection skill. It interacts with the CoinMarketCap Agent Hub via MCP to determine the macro market state (fear, greed, conviction, leverage, and liquidation states).
-2. **TypeScript Cascade Agent**: A background trading daemon that polls real-time metrics for monitored tokens (e.g., WBNB, CAKE, FLOKI). It queries the Skill Server for regime conviction and calculates final cascade scores.
-3. **Trust Wallet Agent Kit (TWAK) & x402**: Handles secure local message signing via an encrypted keystore (`twak-keystore.json`) to provide metered, pay-per-request API access for premium data.
-4. **Next.js Web Dashboard**: A premium, responsive interface showcasing live token scanners, positions ledger, backtest research, and strategy parameters.
+### 3.1. Python Skill Server (ERC-8183 Compliant)
+The "brain" of the operation. This is a FastAPI Python application that exposes a standardized ERC-8183 Web3 skill endpoint. It connects to the **CoinMarketCap Agent Hub** using the Model Context Protocol (MCP) to fetch complex macro-indicators (Fear & Greed index, market conviction, leverage states).
+
+### 3.2. TypeScript Cascade Agent (The Daemon)
+The "muscle" of the operation. Written in Node.js/TypeScript, this background worker runs 24/7. It:
+- Polls real-time spot and futures data for monitored tokens.
+- Queries the Python Skill Server for the macro regime.
+- Computes the mathematical **Cascade Score**.
+- Manages virtual/paper positions (with logic ready for live DEX routing).
+
+### 3.3. Next.js Web Dashboard
+The "eyes" of the operation. A premium, responsive web interface hosted on Vercel. It features:
+- **Scanner**: Live telemetry of all monitored tokens, their current Cascade Scores, funding rates, and open interest.
+- **Positions & Ledger**: A historical record of all simulated trades, entry/exit reasons, and net returns.
+- **Backtest**: Visualized equity curves and metrics comparing the raw strategy against the Regime-Gated strategy.
 
 ---
 
-## ⚡ Key Features
+## 4. The Cascade Algorithm
 
-* **🛡️ Market Regime Gate**: Uses the CMC `detect_market_regime` MCP skill to self-disable the mean-reversion strategy during euphoric trending uptrends, preventing costly stop-out whipsaws.
-* **🌊 Liquidation Cascade Engine**: Monitors spot quotes, funding rates, open interest, and taker long/short volume ratios to detect forced liquidations.
-* **💳 Decentralized Payment Pipeline (x402)**: Authenticates and meters premium endpoint queries dynamically via EIP-191 signatures signed locally by TWAK.
-* **🔄 Fail-Safe Fallback**: If the CoinMarketCap derivatives API is restricted by tier limits, the data layer automatically redirects inquiries to public Binance Futures endpoints to guarantee 100% uptime.
+The core algorithm is a scoring system (0 to 100) that evaluates four main pillars:
 
----
+1. **Market Regime (The Gate)**: 
+   If CoinMarketCap reports "High Greed" or a "Trending Up" regime, the Cascade Score is automatically zeroed out. Mean-reversion fails in trending markets.
+2. **Open Interest (OI) Delta**:
+   A sudden spike in Open Interest indicates massive leverage entering the system. The higher the OI relative to the 24h baseline, the higher the tension.
+3. **Funding Rate Imbalance**:
+   If the funding rate becomes extremely negative (shorts paying longs) or extremely positive (longs paying shorts), it indicates an overcrowded side of the market ripe for a squeeze.
+4. **Taker Buy/Sell Volume Ratio**:
+   Tracks the immediate aggression of market participants. A sudden divergence between price action and taker volume suggests capitulation.
 
-## 🛠️ Tech Stack
-
-- **Agent Daemon**: Node.js, TypeScript, Prisma (PostgreSQL)
-- **Skill Server**: Python, FastAPI, Uvicorn
-- **Frontend**: Next.js, React, TailwindCSS
-- **Web3 & Security**: Trust Wallet Agent Kit (TWAK), ethers.js, x402
-- **Data Providers**: CoinMarketCap API, Binance Futures API
+When these factors align and the final **Cascade Score** crosses the entry threshold (e.g., 75/100), the system generates a signal.
 
 ---
 
-## 📂 Project Structure
+## 5. Trust Wallet Agent Kit (TWAK) & x402 Security
 
-* [`/agent`](./agent): TypeScript daemon, risk manager, TWAK keystore logic, and x402 payment handler.
-* [`/skill-server`](./skill-server): Python ERC-8183 skill server hosting the regime analysis functions.
-* [`/frontend`](./frontend): Next.js web application built with React, TailwindCSS, and chart components.
-* [`/backtest`](./backtest): Historical replay harness with cached market snapshots (Jan-Apr 2026).
+Traditional trading bots use centralized API keys or hold raw private keys in memory. Cascade Predator uses Web3-native primitives:
+
+* **No Plaintext Private Keys**: The agent wallet is encrypted into a local `twak-keystore.json` file.
+* **x402 Micro-Payments**: Instead of a flat subscription for premium CoinMarketCap API endpoints, the agent pays per request. When querying premium data, the HTTP pipeline intercepts a `402 Payment Required` response.
+* **TWAK Signing**: The agent uses the Trust Wallet Agent Kit (TWAK) to decrypt the keystore and sign an EIP-191 cryptographic payment proof. This proof is attached as a header, unlocking the data on the retry. 
+* *Result*: Decentralized, secure, metered data consumption.
 
 ---
 
-## 📝 Prerequisites
+## 6. Resilience & Fallbacks
 
-- Node.js (v18 or higher) & `pnpm`
+Hackathons and live markets require bulletproof code. Cascade Predator implements strict fallbacks:
+
+* **Keystore Auto-Generation**: If the agent boots in a cloud environment (like Render) and `twak-keystore.json` is missing, it will automatically encrypt the raw private key from the environment variables, generate the keystore on the fly, and proceed without crashing.
+* **Binance Futures Failover**: CoinMarketCap API plans have strict endpoint limitations. If a query to the CMC derivatives endpoint fails (e.g., due to an invalid data structure or authorization limit), the agent and skill server gracefully catch the exception and instantly route the query to the **public Binance Futures API** to fetch funding rates and open interest. The execution loop never dies.
+
+---
+
+## 7. Project Structure
+
+The monorepo is divided into four distinct packages:
+
+* [`/agent`](./agent): The TypeScript daemon. Contains TWAK keystore logic, Prisma database schemas, and the x402 interceptor.
+* [`/skill-server`](./skill-server): The Python FastAPI ERC-8183 skill server hosting the CMC MCP integration.
+* [`/frontend`](./frontend): The Next.js web dashboard.
+* [`/backtest`](./backtest): An isolated Node.js script that replays historical market snapshots through the exact same logic used by the live agent to generate performance metrics.
+
+---
+
+## 8. Deployment & Quick Start
+
+### Prerequisites
+- Node.js (v18+) & `pnpm`
 - Python 3.10+
-- A PostgreSQL Database (e.g., Supabase, Neon, local)
-- A CoinMarketCap Pro API Key
-- Trust Wallet Access ID & HMAC Secret
-- A BNB Chain Wallet Private Key (for the Agent)
+- PostgreSQL Database URL
+- CoinMarketCap Pro API Key
+- BNB Chain Wallet Private Key
+
+### 8.1. Skill Server (Python Backend)
+```bash
+cd skill-server
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Create .env
+echo "CMC_API_KEY=your_key" > .env
+echo "TWAK_ACCESS_ID=your_id" >> .env
+echo "TWAK_HMAC_SECRET=your_secret" >> .env
+
+# Run
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+### 8.2. Cascade Agent (TypeScript Daemon)
+```bash
+cd agent
+npx --yes pnpm@latest install
+
+# Create .env
+echo "TWAK_WALLET_PASSWORD=your_password" > .env
+echo "AGENT_PRIVATE_KEY=your_bsc_private_key" >> .env
+echo "DATABASE_URL=postgresql://..." >> .env
+echo "SKILL_SERVER_URL=http://localhost:8000" >> .env
+
+# Build & Run
+npx pnpm run db:generate
+npx pnpm run build
+node dist/index.js
+```
+
+### 8.3. Frontend (Next.js Dashboard)
+```bash
+cd frontend
+npm install
+
+# Create .env
+echo "DATABASE_URL=postgresql://..." > .env
+echo "SKILL_SERVER_URL=http://localhost:8000" >> .env
+
+# Run locally or deploy to Vercel
+npm run dev
+```
+
+*(Note: If deploying on Render, set up a cron job using a service like cron-job.org to ping the services every 14 minutes to prevent the free tier from spinning down).*
 
 ---
 
-## 🚀 Quick Start & Deployment
+## 9. Backtest Research
 
-### 1. Environment Variables Configuration
+We built a custom replay harness inside the `/backtest` directory to validate the thesis. 
 
-Create an `.env` file in the `/agent` directory with the following variables:
-```env
-TWAK_WALLET_PASSWORD=your_keystore_password
-AGENT_PRIVATE_KEY=your_agent_bsc_wallet_private_key
-BSC_RPC_URL=https://bsc-dataseed.binance.org
-CMC_API_KEY=your_coinmarketcap_pro_api_key
-SKILL_SERVER_URL=http://localhost:8000
-DATABASE_URL=postgresql://...
-```
-
-Create an `.env` file in the `/skill-server` directory:
-```env
-CMC_API_KEY=your_coinmarketcap_pro_api_key
-TWAK_ACCESS_ID=your_tw_access_id
-TWAK_HMAC_SECRET=your_tw_hmac_secret
-```
-
-### 2. Deploying the Skill Server (Render)
-1. Deploy `/skill-server` as a Web Service on Render.
-2. Build Command: `pip install -r requirements.txt`
-3. Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-
-### 3. Deploying the Cascade Agent (Render)
-1. Deploy `/agent` as a Background Worker or Web Service on Render.
-2. Build Command: `npx --yes pnpm@latest install && npx pnpm run db:generate && npx pnpm run build`
-3. Start Command: `node dist/index.js`
-4. **Keystore Configuration**: Ensure the `AGENT_PRIVATE_KEY` environment variable is set in the Render dashboard so the agent can auto-generate its TWAK keystore on startup.
-
-### 4. Deploying the Frontend (Vercel)
-1. Import the repository into Vercel.
-2. Set the Root Directory to `frontend`.
-3. Set the Environment Variables `DATABASE_URL` and `SKILL_SERVER_URL`.
-4. Deploy.
-
----
-
-## 📊 Backtest Performance (Regime Gate Impact)
-
-To run a historical replay locally:
+To run it yourself:
 ```bash
 cd backtest
 pnpm install
 pnpm start -- --from 2026-01-01 --to 2026-04-01
 ```
 
-Replaying the strategy against Jan–Apr 2026 BSC derivatives data shows the impact of the CoinMarketCap-powered **Market Regime Gate**:
+### The Impact of the Regime Gate
+Replaying against Jan–Apr 2026 BSC derivatives data (WBNB, CAKE, FLOKI) shows the massive impact of integrating the CoinMarketCap **Market Regime Gate**:
 
 | Metric | Raw Strategy (Pre-Gate) | Regime-Aware (Post-Gate) | Improvement |
 | :--- | :--- | :--- | :--- |
@@ -146,38 +205,24 @@ Replaying the strategy against Jan–Apr 2026 BSC derivatives data shows the imp
 | **Win Rate** | 33.33% | 50.00% | **+16.67%** |
 | **Cumulative Return** | -9.60% | -1.95% | **+7.65%** |
 | **Max Drawdown** | 9.60% | 7.81% | **1.79% Lower Risk** |
-| **Stop-Loss Exits** | 4 | 2 | **Avoided 2 bad exits** |
 
-*Note: In strong trending markets (e.g. March 17–24, 2026), the mean-reversion cascade strategy triggers false-breakout stop-outs. The CMC Regime Gate successfully detects these macro structures and halts the agent to eliminate drawdown.*
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Transition derivatives data sourcing fully to CoinMarketCap premium endpoints once API tier limits are upgraded.
-- [ ] Implement walk-forward regime stratification for more granular entry gates.
-- [ ] Expand monitored token universe beyond top BSC volume leaders.
-- [ ] Integrate on-chain execution layer via 1inch/PancakeSwap routers.
+**Conclusion**: In strong trending markets (e.g., March 17–24, 2026), attempting to trade a cascade bounce results in painful stop-outs. The CMC Regime Gate correctly identified these macro structures and halted the agent, eliminating over a third of the drawdown.
 
 ---
 
-## 🤝 Contributing
+## 10. Roadmap
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+- [ ] **Execution Layer**: Transition from paper-trading ledgers to active routing via 1inch/PancakeSwap routers for real BNB swaps.
+- [ ] **Full CMC Derivatives Integration**: Transition derivatives sourcing entirely back to CoinMarketCap premium endpoints once API tier limits are upgraded.
+- [ ] **Walk-Forward Stratification**: Implement walk-forward regime stratification for more granular entry thresholds.
+- [ ] **Token Universe Expansion**: Expand the scanner beyond the top 5 BSC volume leaders to mid-cap assets where cascades are more violent.
 
 ---
 
-## 📄 License
+## 11. License & Disclaimer
 
+### License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
----
-
-## ⚠️ Disclaimer
-
+### Disclaimer
 **Cascade Predator is experimental software.** The data, research, and algorithms provided by this repository do not constitute financial advice. Trading cryptocurrencies, especially using automated agents or leveraged derivatives, involves significant risk of capital loss. Use this software at your own risk. The developers are not responsible for any financial losses incurred through the use of this agent.
