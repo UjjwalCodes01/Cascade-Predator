@@ -378,18 +378,9 @@ async def fetch_market_snapshot(token: str) -> MarketSnapshot:
             cmc_data = await fetch_cmc_derivatives_data(token_info["cmcSymbol"])
             funding_rate = cmc_data["fundingRate"]
         except Exception as e:
-            is_tier_err = False
-            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (402, 403):
-                is_tier_err = True
-            elif "402" in str(e) or "403" in str(e):
-                is_tier_err = True
-
-            if is_tier_err:
-                print(f"[data] CMC derivatives returned 402/403 plan error. Falling back to Binance.")
-                bd = await get_binance_derivs()
-                funding_rate = bd["fundingRate"]
-            else:
-                raise e
+            print(f"[data] CMC derivatives failed for {token_info['cmcSymbol']} ({e}). Falling back to Binance.")
+            bd = await get_binance_derivs()
+            funding_rate = bd["fundingRate"]
     else:
         bd = await get_binance_derivs()
         funding_rate = bd["fundingRate"]
@@ -400,18 +391,9 @@ async def fetch_market_snapshot(token: str) -> MarketSnapshot:
             cmc_data = await fetch_cmc_derivatives_data(token_info["cmcSymbol"])
             open_interest = cmc_data["openInterest"]
         except Exception as e:
-            is_tier_err = False
-            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (402, 403):
-                is_tier_err = True
-            elif "402" in str(e) or "403" in str(e):
-                is_tier_err = True
-
-            if is_tier_err:
-                print(f"[data] CMC derivatives returned 402/403 plan error. Falling back to Binance.")
-                bd = await get_binance_derivs()
-                open_interest = bd["openInterest"]
-            else:
-                raise e
+            print(f"[data] CMC derivatives failed for {token_info['cmcSymbol']} ({e}). Falling back to Binance.")
+            bd = await get_binance_derivs()
+            open_interest = bd["openInterest"]
     else:
         bd = await get_binance_derivs()
         open_interest = bd["openInterest"]

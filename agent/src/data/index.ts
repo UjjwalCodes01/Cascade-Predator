@@ -391,13 +391,9 @@ export class DataService {
           const cmcDerivs = await fetchCmcDerivativesData(tokenInfo.cmcSymbol);
           fundingRate = cmcDerivs.fundingRate;
         } catch (err: any) {
-          if (err.message?.includes("status: 402") || err.message?.includes("status: 403")) {
-            console.warn(`[data] CMC derivatives API returned 402/403. Falling back to Binance futures for funding rate.`);
-            const bd = await getBinanceDerivs();
-            fundingRate = bd.fundingRate;
-          } else {
-            throw err;
-          }
+          console.warn(`[data] CMC derivatives API failed for ${tokenInfo.cmcSymbol} (${err.message}). Falling back to Binance futures for funding rate.`);
+          const bd = await getBinanceDerivs();
+          fundingRate = bd.fundingRate;
         }
       } else {
         const bd = await getBinanceDerivs();
@@ -410,13 +406,9 @@ export class DataService {
           const cmcDerivs = await fetchCmcDerivativesData(tokenInfo.cmcSymbol);
           openInterest = cmcDerivs.openInterest;
         } catch (err: any) {
-          if (err.message?.includes("status: 402") || err.message?.includes("status: 403")) {
-            console.warn(`[data] CMC derivatives API returned 402/403. Falling back to Binance futures for open interest.`);
-            const bd = await getBinanceDerivs();
-            openInterest = bd.openInterest;
-          } else {
-            throw err;
-          }
+          console.warn(`[data] CMC derivatives API failed for ${tokenInfo.cmcSymbol} (${err.message}). Falling back to Binance futures for open interest.`);
+          const bd = await getBinanceDerivs();
+          openInterest = bd.openInterest;
         }
       } else {
         const bd = await getBinanceDerivs();
