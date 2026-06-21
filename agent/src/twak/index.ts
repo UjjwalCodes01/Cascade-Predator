@@ -54,8 +54,15 @@ async function loadKeystoreWallet(keystorePath: string): Promise<ethers.HDNodeWa
       fs.writeFileSync(absPath, encrypted, "utf8");
       console.log(`[twak] ✅ Keystore auto-generated at: ${absPath}`);
     } else {
+      const availableKeys = Object.keys(process.env).filter(k => 
+        k.toUpperCase().includes("KEY") || 
+        k.toUpperCase().includes("PASS") || 
+        k.toUpperCase().includes("SIGNER") || 
+        k.toUpperCase().includes("SECRET")
+      ).join(", ");
       throw new Error(
         `[twak] Keystore file not found: ${absPath}\n` +
+        `  Available env keys: [${availableKeys}].\n` +
         `  Run: node create-keystore.mjs to generate it from your raw key, or set AGENT_PRIVATE_KEY/PRIVATE_KEY and TWAK_WALLET_PASSWORD in env.`
       );
     }
